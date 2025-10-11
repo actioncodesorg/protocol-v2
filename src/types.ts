@@ -3,7 +3,7 @@ export interface ActionCode {
   pubkey: string;
   timestamp: number;
   expiresAt: number;
-  signature?: string;
+  signature: string;
 }
 
 export interface CanonicalMessageParts {
