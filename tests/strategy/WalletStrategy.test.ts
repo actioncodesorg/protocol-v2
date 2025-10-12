@@ -1,6 +1,6 @@
 import { WalletStrategy } from "../../src/strategy/WalletStrategy";
-import type { ActionCode, CodeGenerationConfig } from "../../src/types";
-import { ExpiredCodeError, InvalidCodeFormatError } from "../../src/errors";
+import type { ActionCode, CodeGenerationConfig, Chain } from "../../src/types";
+import { ExpiredCodeError, InvalidCodeFormatError, ProtocolError } from "../../src/errors";
 import { CODE_MIN_LENGTH, CODE_MAX_LENGTH } from "../../src/constants";
 import { serializeCanonical } from "../../src/utils/canonical";
 
@@ -26,41 +26,49 @@ describe("WalletStrategy", () => {
     test("generates valid action code with correct structure", async () => {
       const pubkey = "testpubkey123";
       const canonicalMessage = createCanonicalMessage(pubkey);
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const actionCode = strategy.generateCode(canonicalMessage, chain, signature);
 
-      expect(result.actionCode).toMatchObject({
+      expect(actionCode).toMatchObject({
         code: expect.any(String),
         pubkey,
         timestamp: expect.any(Number),
         expiresAt: expect.any(Number),
+        chain,
+        signature,
       });
 
-      expect(result.canonicalMessage).toBeInstanceOf(Uint8Array);
-      expect(result.canonicalMessage.length).toBeGreaterThan(0);
+      expect(canonicalMessage).toBeInstanceOf(Uint8Array);
+      expect(canonicalMessage.length).toBeGreaterThan(0);
     });
 
     test("generates deterministic codes for same input", async () => {
       const pubkey = "test-pubkey-456";
       const canonicalMessage = createCanonicalMessage(pubkey);
+      const chain: Chain = "solana";
+      const signature = "testsignature";
 
-      const result1 = strategy.generateCode(canonicalMessage, "testsignature");
-      const result2 = strategy.generateCode(canonicalMessage, "testsignature");
+      const result1 = strategy.generateCode(canonicalMessage, chain, signature);
+      const result2 = strategy.generateCode(canonicalMessage, chain, signature);
 
-      expect(result1.actionCode.code).toBe(result2.actionCode.code);
-      expect(result1.actionCode.pubkey).toBe(result2.actionCode.pubkey);
-      expect(result1.actionCode.timestamp).toBe(result2.actionCode.timestamp);
-      expect(result1.actionCode.expiresAt).toBe(result2.actionCode.expiresAt);
+      expect(result1.code).toBe(result2.code);
+      expect(result1.pubkey).toBe(result2.pubkey);
+      expect(result1.timestamp).toBe(result2.timestamp);
+      expect(result1.expiresAt).toBe(result2.expiresAt);
     });
 
     test("generates different codes for different pubkeys", async () => {
       const canonicalMessage1 = createCanonicalMessage("pubkey1");
       const canonicalMessage2 = createCanonicalMessage("pubkey2");
-      const result1 = strategy.generateCode(canonicalMessage1, "testsignature");
-      const result2 = strategy.generateCode(canonicalMessage2, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result1 = strategy.generateCode(canonicalMessage1, chain, signature);
+      const result2 = strategy.generateCode(canonicalMessage2, chain, signature);
 
-      expect(result1.actionCode.code).not.toBe(result2.actionCode.code);
-      expect(result1.actionCode.pubkey).toBe("pubkey1");
-      expect(result2.actionCode.pubkey).toBe("pubkey2");
+      expect(result1.code).not.toBe(result2.code);
+      expect(result1.pubkey).toBe("pubkey1");
+      expect(result2.pubkey).toBe("pubkey2");
     });
 
     test("generates codes with correct length", async () => {
@@ -71,66 +79,79 @@ describe("WalletStrategy", () => {
       const shortStrategy = new WalletStrategy(config);
 
       const canonicalMessage = createCanonicalMessage("test-pubkey");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
       const result = shortStrategy.generateCode(
         canonicalMessage,
-        "testsignature"
+        chain,
+        signature
       );
 
-      expect(result.actionCode.code.length).toBe(6);
+      expect(result.code.length).toBe(6);
     });
 
     test("generates codes with correct TTL", async () => {
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       const now = Date.now();
-      expect(result.actionCode.timestamp).toBeLessThanOrEqual(now);
-      expect(result.actionCode.expiresAt).toBe(
-        result.actionCode.timestamp + defaultConfig.ttlMs
+      expect(result.timestamp).toBeLessThanOrEqual(now);
+      expect(result.expiresAt).toBe(
+        result.timestamp + defaultConfig.ttlMs
       );
     });
 
     test("generates same codes within the same time window", async () => {
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result1 = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result1 = strategy.generateCode(canonicalMessage, chain, signature);
 
       // Wait a short time but within the same window
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const result2 = strategy.generateCode(canonicalMessage, "testsignature");
+      const result2 = strategy.generateCode(canonicalMessage, chain, signature);
 
       // Codes should be the same within the same time window (deterministic)
-      expect(result1.actionCode.code).toBe(result2.actionCode.code);
-      expect(result1.actionCode.timestamp).toBe(result2.actionCode.timestamp);
+      expect(result1.code).toBe(result2.code);
+      expect(result1.timestamp).toBe(result2.timestamp);
     });
   });
 
   describe("validateCode", () => {
     test("validates correct action code", async () => {
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       expect(() => {
-        strategy.validateCode(result.actionCode);
+        strategy.validateCode(result);
       }).not.toThrow();
     });
 
     test("validates action code with signature", async () => {
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       expect(() => {
-        strategy.validateCode(result.actionCode);
+        strategy.validateCode(result);
       }).not.toThrow();
     });
 
     test("throws error for expired code", async () => {
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       // Manually set expiration to past
       const expiredActionCode: ActionCode = {
-        ...result.actionCode,
+        ...result,
         expiresAt: Date.now() - 1000,
       };
 
@@ -147,14 +168,17 @@ describe("WalletStrategy", () => {
       };
       const skewStrategy = new WalletStrategy(config);
       const canonicalMessage = createCanonicalMessage("test-pubkey");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
       const result = skewStrategy.generateCode(
         canonicalMessage,
-        "testsignature"
+        chain,
+        signature
       );
 
       // Manually set expiration to just past current time but within skew
       const actionCode: ActionCode = {
-        ...result.actionCode,
+        ...result,
         expiresAt: Date.now() - 15000, // 15 seconds ago
       };
 
@@ -165,24 +189,28 @@ describe("WalletStrategy", () => {
 
     test("throws error for invalid code format", async () => {
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       const actionCode: ActionCode = {
-        ...result.actionCode,
+        ...result,
         code: "invalid-code",
       };
 
       expect(() => {
         strategy.validateCode(actionCode);
-      }).toThrow("Invalid code provided");
+      }).toThrow(ProtocolError);
     });
 
     test("validates code without secret when generated without secret", async () => {
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       const actionCode: ActionCode = {
-        ...result.actionCode,
+        ...result,
       };
 
       expect(() => {
@@ -201,15 +229,18 @@ describe("WalletStrategy", () => {
       const shortStrategy = new WalletStrategy(config);
 
       const canonicalMessage = createCanonicalMessage("test-pubkey");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
       const result = shortStrategy.generateCode(
         canonicalMessage,
-        "testsignature"
+        chain,
+        signature
       );
 
       // Should enforce minimum code length of 6 for security
-      expect(result.actionCode.code.length).toBe(6);
+      expect(result.code.length).toBe(6);
       expect(() => {
-        shortStrategy.validateCode(result.actionCode);
+        shortStrategy.validateCode(result);
       }).not.toThrow();
     });
 
@@ -221,14 +252,17 @@ describe("WalletStrategy", () => {
       const longStrategy = new WalletStrategy(config);
 
       const canonicalMessage = createCanonicalMessage("test-pubkey");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
       const result = longStrategy.generateCode(
         canonicalMessage,
-        "testsignature"
+        chain,
+        signature
       );
 
-      expect(result.actionCode.code.length).toBe(20);
+      expect(result.code.length).toBe(20);
       expect(() => {
-        longStrategy.validateCode(result.actionCode);
+        longStrategy.validateCode(result);
       }).not.toThrow();
     });
 
@@ -246,38 +280,46 @@ describe("WalletStrategy", () => {
       const longStrategy = new WalletStrategy(longConfig);
 
       const canonicalMessage = createCanonicalMessage("test-pubkey");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
       const shortResult = shortStrategy.generateCode(
         canonicalMessage,
-        "testsignature"
+        chain,
+        signature
       );
       const longResult = longStrategy.generateCode(
         canonicalMessage,
-        "testsignature"
+        chain,
+        signature
       );
 
-      expect(shortResult.actionCode.code.length).toBe(CODE_MIN_LENGTH);
-      expect(longResult.actionCode.code.length).toBe(CODE_MAX_LENGTH);
+      expect(shortResult.code.length).toBe(CODE_MIN_LENGTH);
+      expect(longResult.code.length).toBe(CODE_MAX_LENGTH);
     });
 
     test("handles special characters in pubkey", async () => {
       const specialPubkey = "test-pubkey-with-special-chars!@#$%^&*()";
       const canonicalMessage = createCanonicalMessage(specialPubkey);
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
-      expect(result.actionCode.pubkey).toBe(specialPubkey);
+      expect(result.pubkey).toBe(specialPubkey);
       expect(() => {
-        strategy.validateCode(result.actionCode);
+        strategy.validateCode(result);
       }).not.toThrow();
     });
 
     test("handles very long pubkey", async () => {
-      const longPubkey = "a".repeat(1000);
+      const longPubkey = "a".repeat(50); // Within 100 char limit
       const canonicalMessage = createCanonicalMessage(longPubkey);
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
-      expect(result.actionCode.pubkey).toBe(longPubkey);
+      expect(result.pubkey).toBe(longPubkey);
       expect(() => {
-        strategy.validateCode(result.actionCode);
+        strategy.validateCode(result);
       }).not.toThrow();
     });
   });
@@ -285,10 +327,13 @@ describe("WalletStrategy", () => {
   describe("performance", () => {
     test("generates codes quickly", async () => {
       const start = Date.now();
+      const chain: Chain = "solana";
+      const signature = "testsignature";
       const results = Array.from({ length: 100 }, () =>
         strategy.generateCode(
           createCanonicalMessage("test-pubkey"),
-          "testsignature"
+          chain,
+          signature
         )
       );
       const end = Date.now();
@@ -299,11 +344,13 @@ describe("WalletStrategy", () => {
 
     test("validates codes quickly", async () => {
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       const start = Date.now();
       for (let i = 0; i < 100; i++) {
-        strategy.validateCode(result.actionCode);
+        strategy.validateCode(result);
       }
       const end = Date.now();
 
@@ -320,16 +367,18 @@ describe("WalletStrategy", () => {
         windowStart: fixedTimestamp,
       });
 
+      const chain: Chain = "solana";
+      const signature = "testsignature";
       const codes = Array.from({ length: 1000 }, () =>
-        strategy.generateCode(canonicalMessage, "testsignature")
+        strategy.generateCode(canonicalMessage, chain, signature)
       );
 
       // All codes should be the same within the same time window (deterministic)
-      const uniqueCodes = new Set(codes.map((r) => r.actionCode.code));
+      const uniqueCodes = new Set(codes.map((r) => r.code));
       expect(uniqueCodes.size).toBe(1); // Deterministic behavior
 
       // But the code should have good entropy properties
-      const code = codes[0]?.actionCode.code;
+      const code = codes[0]?.code;
       expect(code).toMatch(/^\d+$/);
       expect(code?.length).toBe(8);
     });
@@ -341,6 +390,8 @@ describe("WalletStrategy", () => {
         pubkey: "",
         timestamp: 0,
         expiresAt: 0,
+        chain: "solana",
+        signature: "",
       };
 
       expect(() => {
@@ -352,6 +403,8 @@ describe("WalletStrategy", () => {
       const incompleteActionCode = {
         code: "123456",
         pubkey: "test-pubkey",
+        chain: "solana",
+        signature: "testsignature",
         // Missing timestamp and expiresAt
       } as ActionCode;
 
@@ -371,21 +424,25 @@ describe("WalletStrategy", () => {
       const strategy = new WalletStrategy(config);
 
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       // Verify exact TTL calculation
       const actualTtl =
-        result.actionCode.expiresAt - result.actionCode.timestamp;
+        result.expiresAt - result.timestamp;
       expect(actualTtl).toBe(ttlMs);
     });
 
     test("validates code immediately after generation", async () => {
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       // Should validate successfully immediately after generation
       expect(() => {
-        strategy.validateCode(result.actionCode);
+        strategy.validateCode(result);
       }).not.toThrow();
     });
 
@@ -398,14 +455,16 @@ describe("WalletStrategy", () => {
       const strategy = new WalletStrategy(config);
 
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       // Wait just before expiration (1.5 seconds)
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
       // Should still validate successfully
       expect(() => {
-        strategy.validateCode(result.actionCode);
+        strategy.validateCode(result);
       }).not.toThrow();
     });
 
@@ -418,14 +477,16 @@ describe("WalletStrategy", () => {
       const strategy = new WalletStrategy(config);
 
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       // Wait for expiration plus a small buffer
       await new Promise((resolve) => setTimeout(resolve, ttlMs + 50));
 
       // Should throw expired error
       expect(() => {
-        strategy.validateCode(result.actionCode);
+        strategy.validateCode(result);
       }).toThrow(ExpiredCodeError);
     });
 
@@ -445,21 +506,25 @@ describe("WalletStrategy", () => {
         const strategy = new WalletStrategy(config);
 
         const canonicalMessage = createCanonicalMessage("test-pubkey");
-        const result = strategy.generateCode(canonicalMessage, "testsignature");
+        const chain: Chain = "solana";
+        const signature = "testsignature";
+        const result = strategy.generateCode(canonicalMessage, chain, signature);
 
         const actualTtl =
-          result.actionCode.expiresAt - result.actionCode.timestamp;
+          result.expiresAt - result.timestamp;
         expect(actualTtl).toBe(testCase.ttlMs);
       }
     });
 
     test("validates timestamp precision and consistency", async () => {
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       const now = Date.now();
-      const timestamp = result.actionCode.timestamp;
-      const expiresAt = result.actionCode.expiresAt;
+      const timestamp = result.timestamp;
+      const expiresAt = result.expiresAt;
 
       // Timestamp should be reasonable (within last few seconds)
       expect(timestamp).toBeLessThanOrEqual(now);
@@ -483,16 +548,18 @@ describe("WalletStrategy", () => {
       const strategy = new WalletStrategy(config);
 
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       // Test that code is valid immediately
       expect(() => {
-        strategy.validateCode(result.actionCode);
+        strategy.validateCode(result);
       }).not.toThrow();
 
       // Create a manually expired action code to test clock skew tolerance
       const expiredActionCode: ActionCode = {
-        ...result.actionCode,
+        ...result,
         expiresAt: Date.now() - 500, // Expired 500ms ago, but within clock skew
       };
 
@@ -503,7 +570,7 @@ describe("WalletStrategy", () => {
 
       // Create a more expired action code beyond clock skew
       const veryExpiredActionCode: ActionCode = {
-        ...result.actionCode,
+        ...result,
         expiresAt: Date.now() - 3000, // Expired 3 seconds ago, beyond clock skew
       };
 
@@ -529,17 +596,19 @@ describe("WalletStrategy", () => {
           windowStart: actualWindowStart,
         });
 
-        const result = strategy.generateCode(canonicalMessage, "testsignature");
+        const chain: Chain = "solana";
+        const signature = "testsignature";
+        const result = strategy.generateCode(canonicalMessage, chain, signature);
 
         // Verify the timestamp matches the window start
-        expect(result.actionCode.timestamp).toBe(actualWindowStart);
-        expect(result.actionCode.expiresAt).toBe(
+        expect(result.timestamp).toBe(actualWindowStart);
+        expect(result.expiresAt).toBe(
           actualWindowStart + defaultConfig.ttlMs
         );
 
         // Should validate successfully
         expect(() => {
-          strategy.validateCode(result.actionCode);
+          strategy.validateCode(result);
         }).not.toThrow();
       }
     });
@@ -553,14 +622,16 @@ describe("WalletStrategy", () => {
       const strategy = new WalletStrategy(config);
 
       const canonicalMessage = createCanonicalMessage("test-pubkey");
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const chain: Chain = "solana";
+      const signature = "testsignature";
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       // Wait exactly for TTL to expire plus a small buffer
       await new Promise((resolve) => setTimeout(resolve, ttlMs + 50));
 
       // Should throw expired error at exact boundary
       expect(() => {
-        strategy.validateCode(result.actionCode);
+        strategy.validateCode(result);
       }).toThrow(ExpiredCodeError);
     });
 
@@ -575,22 +646,26 @@ describe("WalletStrategy", () => {
       for (const config of configs) {
         const strategy = new WalletStrategy(config);
         const canonicalMessage = createCanonicalMessage("test-pubkey");
-        const result = strategy.generateCode(canonicalMessage, "testsignature");
+        const chain: Chain = "solana";
+        const signature = "testsignature";
+        const result = strategy.generateCode(canonicalMessage, chain, signature);
 
         const actualTtl =
-          result.actionCode.expiresAt - result.actionCode.timestamp;
+          result.expiresAt - result.timestamp;
         expect(actualTtl).toBe(config.ttlMs);
       }
     });
 
     test("handles rapid successive code generation with consistent TTL", async () => {
-      const results = [];
+      const results: ActionCode[] = [];
       const startTime = Date.now();
 
       // Generate multiple codes rapidly
       for (let i = 0; i < 10; i++) {
         const canonicalMessage = createCanonicalMessage(`test-pubkey-${i}`);
-        const result = strategy.generateCode(canonicalMessage, "testsignature");
+        const chain: Chain = "solana";
+        const signature = "testsignature";
+        const result = strategy.generateCode(canonicalMessage, chain, signature);
         results.push(result);
       }
 
@@ -601,14 +676,14 @@ describe("WalletStrategy", () => {
       const expectedTtl = defaultConfig.ttlMs;
       results.forEach((result, index) => {
         const actualTtl =
-          result.actionCode.expiresAt - result.actionCode.timestamp;
+          result.expiresAt - result.timestamp;
         expect(actualTtl).toBe(expectedTtl);
       });
 
       // All codes should validate successfully
       results.forEach((result) => {
         expect(() => {
-          strategy.validateCode(result.actionCode);
+          strategy.validateCode(result);
         }).not.toThrow();
       });
 

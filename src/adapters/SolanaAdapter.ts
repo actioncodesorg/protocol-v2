@@ -8,20 +8,14 @@ import {
   MessageV0,
 } from "@solana/web3.js";
 import { createMemoInstruction, MEMO_PROGRAM_ID } from "@solana/spl-memo";
-import {
-  BaseChainAdapter,
-  type WalletContext,
-  type WalletRevokeContext,
-  type DelegatedContext,
-  type DelegatedRevokeContext,
-} from "./BaseChainAdapter";
+import { BaseChainAdapter } from "./BaseChainAdapter";
 import {
   buildProtocolMeta,
   parseProtocolMeta,
   type ProtocolMetaFields,
 } from "../utils/protocolMeta";
 import { codeHash } from "../utils/crypto";
-import type { ActionCode } from "../types";
+import type { ActionCode, DelegatedActionCode } from "../types";
 import { ProtocolError } from "../errors";
 import {
   serializeCanonical,
@@ -29,29 +23,12 @@ import {
   serializeDelegationProof,
 } from "../utils/canonical";
 
-export const ADAPTER_CHAIN_NAME = "solana" as const;
-export type SolanaWalletContext = WalletContext<{
-  chain: typeof ADAPTER_CHAIN_NAME;
-}>;
-export type SolanaDelegatedContext = DelegatedContext<{
-  chain: typeof ADAPTER_CHAIN_NAME;
-}>;
-export type SolanaWalletRevokeContext = WalletRevokeContext<{
-  chain: typeof ADAPTER_CHAIN_NAME;
-}>;
-export type SolanaDelegatedRevokeContext = DelegatedRevokeContext<{
-  chain: typeof ADAPTER_CHAIN_NAME;
-}>;
-
 /** Union of supported Solana txn types */
 export type SolanaTransaction = Transaction | VersionedTransaction;
 
-export class SolanaAdapter extends BaseChainAdapter<
-  SolanaWalletContext,
-  SolanaDelegatedContext,
-  SolanaWalletRevokeContext,
-  SolanaDelegatedRevokeContext
-> {
+export const ADAPTER_CHAIN_NAME = "solana" as const;
+
+export class SolanaAdapter extends BaseChainAdapter {
   /** Normalize pubkey input to PublicKey */
   private normalizePubkey(input: string | PublicKey): PublicKey {
     if (typeof input === "string") {
@@ -61,17 +38,20 @@ export class SolanaAdapter extends BaseChainAdapter<
   }
 
   /** Verify the signature over canonical message (protocol-level) */
-  verifyWithWallet(context: SolanaWalletContext): boolean {
+  verifyWithWallet(actionCode: ActionCode): boolean {
     // Early validation checks - these are fast and don't leak timing info
-    if (context.chain !== ADAPTER_CHAIN_NAME) return false;
-    if (!context.message || !context.message.pubkey || !context.walletSignature)
+    if (actionCode.chain !== ADAPTER_CHAIN_NAME) return false;
+    if (!actionCode.pubkey || !actionCode.timestamp || !actionCode.signature)
       return false;
 
     // Perform all operations in a single try-catch to ensure consistent timing
     try {
-      const message = serializeCanonical(context.message);
-      const pub = this.normalizePubkey(context.message.pubkey);
-      const sigBytes = bs58.decode(context.walletSignature);
+      const message = serializeCanonical({
+        pubkey: actionCode.pubkey,
+        windowStart: actionCode.timestamp,
+      });
+      const pub = this.normalizePubkey(actionCode.pubkey);
+      const sigBytes = bs58.decode(actionCode.signature);
       const pubBytes = pub.toBytes();
 
       // Validate lengths
@@ -88,17 +68,17 @@ export class SolanaAdapter extends BaseChainAdapter<
   }
 
   /** Verify delegation proof signature */
-  verifyWithDelegation(context: SolanaDelegatedContext): boolean {
+  verifyWithDelegation(delegatedActionCode: DelegatedActionCode): boolean {
     // Early validation checks - these are fast and don't leak timing info
-    if (context.chain !== ADAPTER_CHAIN_NAME) return false;
+    if (delegatedActionCode.chain !== ADAPTER_CHAIN_NAME) return false;
     if (
-      !context.message.pubkey ||
-      !context.delegatedSignature ||
-      !context.delegationProof
+      !delegatedActionCode.pubkey ||
+      !delegatedActionCode.timestamp ||
+      !delegatedActionCode.signature
     )
       return false;
 
-    const proof = context.delegationProof;
+    const proof = delegatedActionCode.delegationProof;
 
     // Basic validation
     if (
@@ -117,23 +97,31 @@ export class SolanaAdapter extends BaseChainAdapter<
     }
 
     // The revoke/message pubkey for delegated flow must be the delegated pubkey
-    if (proof.delegatedPubkey !== context.message.pubkey) return false;
+    if (delegatedActionCode.pubkey !== proof.delegatedPubkey) return false;
 
     // Check if delegation has expired
     if (proof.expiresAt < Date.now()) return false;
 
     // Perform all operations in a single try-catch to ensure consistent timing
     try {
+      // this check if delegation correct
       const delegationMessage = serializeDelegationProof(proof);
       const walletPub = this.normalizePubkey(proof.walletPubkey);
       const walletSigBytes = bs58.decode(proof.signature);
       const walletPubBytes = walletPub.toBytes();
-      
-      const canonicalMessage = serializeCanonical(context.message);
+
+      // this check if generated code correct by delegated keypair
+      // The signature was created by signing a message with the DELEGATED pubkey
+      const canonicalMessage = serializeCanonical({
+        pubkey: proof.delegatedPubkey,
+        windowStart: delegatedActionCode.timestamp,
+      });
       const delegatedPub = this.normalizePubkey(proof.delegatedPubkey);
-      const delegatedSigBytes = bs58.decode(context.delegatedSignature);
+      const delegatedSigBytes = bs58.decode(
+        delegatedActionCode.signature
+      );
       const delegatedPubBytes = delegatedPub.toBytes();
-      
+
       // Validate lengths first to prevent timing attacks
       if (walletSigBytes.length !== 64 || walletPubBytes.length !== 32) {
         return false;
@@ -141,23 +129,24 @@ export class SolanaAdapter extends BaseChainAdapter<
       if (delegatedSigBytes.length !== 64 || delegatedPubBytes.length !== 32) {
         return false;
       }
-      
+
       // Perform both signature verifications regardless of first result
       // This prevents timing attacks that could leak information about which signature failed
-      const walletOk = nacl.sign.detached.verify(
+      const delegationProofOk = nacl.sign.detached.verify(
         delegationMessage,
         walletSigBytes,
         walletPubBytes
       );
-      
-      const delegatedOk = nacl.sign.detached.verify(
+
+      const canonicalMessageOk = nacl.sign.detached.verify(
         canonicalMessage,
         delegatedSigBytes,
         delegatedPubBytes
       );
-      
+
+
       // Return result only after both operations complete
-      return walletOk && delegatedOk;
+      return delegationProofOk && canonicalMessageOk;
     } catch {
       // All errors result in false with consistent timing
       return false;
@@ -165,17 +154,24 @@ export class SolanaAdapter extends BaseChainAdapter<
   }
 
   /** Verify the signature over canonical revoke message (protocol-level) */
-  verifyRevokeWithWallet(context: SolanaWalletRevokeContext): boolean {
+  verifyRevokeWithWallet(
+    actionCode: ActionCode,
+    revokeSignature: string
+  ): boolean {
     // Early validation checks - these are fast and don't leak timing info
-    if (context.chain !== ADAPTER_CHAIN_NAME) return false;
-    if (!context.message || !context.message.pubkey || !context.walletSignature)
+    if (actionCode.chain !== ADAPTER_CHAIN_NAME) return false;
+    if (!actionCode.pubkey || !actionCode.timestamp || !revokeSignature)
       return false;
 
     // Perform all operations in a single try-catch to ensure consistent timing
     try {
-      const message = serializeCanonicalRevoke(context.message);
-      const pub = this.normalizePubkey(context.message.pubkey);
-      const sigBytes = bs58.decode(context.walletSignature);
+      const message = serializeCanonicalRevoke({
+        pubkey: actionCode.pubkey,
+        codeHash: codeHash(actionCode.code),
+        windowStart: actionCode.timestamp,
+      });
+      const pub = this.normalizePubkey(actionCode.pubkey);
+      const sigBytes = bs58.decode(revokeSignature);
       const pubBytes = pub.toBytes();
 
       // Validate lengths
@@ -191,18 +187,21 @@ export class SolanaAdapter extends BaseChainAdapter<
     }
   }
 
-  verifyRevokeWithDelegation(context: SolanaDelegatedRevokeContext): boolean {
+  verifyRevokeWithDelegation(
+    delegatedActionCode: DelegatedActionCode,
+    revokeSignature: string
+  ): boolean {
     // Early validation checks - these are fast and don't leak timing info
-    if (context.chain !== ADAPTER_CHAIN_NAME) return false;
+    if (delegatedActionCode.chain !== ADAPTER_CHAIN_NAME) return false;
     if (
-      !context.message ||
-      !context.message.pubkey ||
-      !context.delegatedSignature ||
-      !context.delegationProof
+      !delegatedActionCode.pubkey ||
+      !delegatedActionCode.timestamp ||
+      !delegatedActionCode.signature ||
+      !delegatedActionCode.delegationProof
     )
       return false;
 
-    const proof = context.delegationProof;
+    const proof = delegatedActionCode.delegationProof;
 
     // Basic validation
     if (
@@ -221,38 +220,51 @@ export class SolanaAdapter extends BaseChainAdapter<
     }
 
     // The revoke/message pubkey for delegated flow must be the delegated pubkey
-    if (proof.delegatedPubkey !== context.message.pubkey) return false;
+    if (delegatedActionCode.pubkey !== proof.delegatedPubkey) return false;
 
     // Check if delegation has expired
     if (proof.expiresAt < Date.now()) return false;
 
+    // Perform all operations in a single try-catch to ensure consistent timing
     try {
       const delegationMessage = serializeDelegationProof(proof);
       const walletPub = this.normalizePubkey(proof.walletPubkey);
       const walletSigBytes = bs58.decode(proof.signature);
       const walletPubBytes = walletPub.toBytes();
+
+      const revokeMessage = serializeCanonicalRevoke({
+        pubkey: proof.delegatedPubkey, // Revoke signature is from delegated keypair
+        codeHash: codeHash(delegatedActionCode.code),
+        windowStart: delegatedActionCode.timestamp,
+      });
+      const delegatedPub = this.normalizePubkey(proof.delegatedPubkey);
+      const delegatedSigBytes = bs58.decode(revokeSignature);
+      const delegatedPubBytes = delegatedPub.toBytes();
+
+      // Validate lengths first to prevent timing attacks
       if (walletSigBytes.length !== 64 || walletPubBytes.length !== 32) {
         return false;
       }
-      const walletOk = nacl.sign.detached.verify(
+      if (delegatedSigBytes.length !== 64 || delegatedPubBytes.length !== 32) {
+        return false;
+      }
+
+      // Perform both signature verifications regardless of first result
+      // This prevents timing attacks that could leak information about which signature failed
+      const delegationProofOk = nacl.sign.detached.verify(
         delegationMessage,
         walletSigBytes,
         walletPubBytes
       );
-      if (!walletOk) return false;
 
-      const revokeMessage = serializeCanonicalRevoke(context.message);
-      const delegatedPub = this.normalizePubkey(proof.delegatedPubkey);
-      const delegatedSigBytes = bs58.decode(context.delegatedSignature);
-      const delegatedPubBytes = delegatedPub.toBytes();
-      if (delegatedSigBytes.length !== 64 || delegatedPubBytes.length !== 32) {
-        return false;
-      }
-      return nacl.sign.detached.verify(
+      const revokeMessageOk = nacl.sign.detached.verify(
         revokeMessage,
         delegatedSigBytes,
         delegatedPubBytes
       );
+
+      // Return result only after both operations complete
+      return delegationProofOk && revokeMessageOk;
     } catch {
       // All errors result in false with consistent timing
       return false;

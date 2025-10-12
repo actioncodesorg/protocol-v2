@@ -3,16 +3,21 @@ import type {
   CodeGenerationConfig,
   DelegationProof,
   DelegatedActionCode,
+  Chain,
+  ActionCodeRevoke,
+  DelegatedActionCodeRevoke,
 } from "./types";
-import type {
-  ChainAdapter,
-  WalletContext,
-  DelegatedContext,
-} from "./adapters/BaseChainAdapter";
+import type { ChainAdapter, SignFn } from "./adapters/BaseChainAdapter";
 import { WalletStrategy } from "./strategy/WalletStrategy";
 import { DelegationStrategy } from "./strategy/DelegationStrategy";
 import { SolanaAdapter } from "./adapters/SolanaAdapter";
 import { ProtocolError } from "./errors";
+import { SUPPORTED_CHAINS } from "./constants";
+import {
+  getCanonicalMessageParts,
+  serializeCanonicalRevoke,
+} from "./utils/canonical";
+import { codeHash } from "./utils/crypto";
 
 export class ActionCodesProtocol {
   private adapters: Record<string, ChainAdapter> = {};
@@ -21,7 +26,7 @@ export class ActionCodesProtocol {
 
   constructor(private readonly config: CodeGenerationConfig) {
     // Register default adapters
-    this.adapters.solana = new SolanaAdapter() as unknown as ChainAdapter;
+    this.adapters.solana = new SolanaAdapter();
 
     // Initialize strategies
     this._walletStrategy = new WalletStrategy(config);
@@ -59,82 +64,146 @@ export class ActionCodesProtocol {
   }
 
   // Generate code
-  generateCode(
+  async generate(
     strategy: "wallet",
-    canonicalMessage: Uint8Array,
-    signature: string
-  ): {
-    actionCode: ActionCode;
-    canonicalMessage: Uint8Array;
-  };
-  generateCode(
+    pubkey: string,
+    chain: Chain,
+    signFn: SignFn
+  ): Promise<ActionCode>;
+  async generate(
     strategy: "delegation",
     delegationProof: DelegationProof,
-    signature: string
-  ): {
-    actionCode: DelegatedActionCode;
-  };
-  generateCode(
+    chain: Chain,
+    signFn: SignFn
+  ): Promise<DelegatedActionCode>;
+  async generate(
     strategy: "wallet" | "delegation",
-    param1: Uint8Array | DelegationProof,
-    signature?: string
-  ): {
-    actionCode: ActionCode | DelegatedActionCode;
-    canonicalMessage?: Uint8Array;
-  } {
+    pubkeyOrProof: string | DelegationProof,
+    chain: Chain,
+    signFn: SignFn
+  ): Promise<ActionCode | DelegatedActionCode> {
+    if (!chain || !SUPPORTED_CHAINS.includes(chain)) {
+      throw ProtocolError.invalidAdapter(chain);
+    }
+
+    if (!signFn || typeof signFn !== "function") {
+      throw ProtocolError.invalidSignature("Missing signature function");
+    }
+
     if (strategy === "wallet") {
+      const canonical = getCanonicalMessageParts(pubkeyOrProof as string);
+      // For now we have to pass Solana as only chain
+      // later we will allow to pass the chain dynamically
+      const signature = await signFn(canonical, chain);
+
       // Here param1 must be Uint8Array (canonical message)
       if (!signature) {
         throw ProtocolError.invalidSignature(
           "Missing signature over canonical message"
         );
       }
-      return this.walletStrategy.generateCode(param1 as Uint8Array, signature);
+      return this.walletStrategy.generateCode(canonical, chain, signature);
     } else {
+      const proof = pubkeyOrProof as DelegationProof;
+      const canonical = getCanonicalMessageParts(proof.delegatedPubkey); // Use delegated pubkey for signing
+      const signature = await signFn(canonical, chain);
+
       // Here param1 must be DelegationProof
       if (!signature) {
         throw ProtocolError.invalidSignature("Missing delegated signature");
       }
       return this.delegationStrategy.generateDelegatedCode(
-        param1 as DelegationProof,
+        proof as DelegationProof,
+        canonical,
+        chain,
         signature
       );
     }
   }
 
-  // Overloaded validateCode methods with strategy parameter
-  validateCode(
+  async revoke(
     strategy: "wallet",
     actionCode: ActionCode,
-    context?: WalletContext<unknown>
-  ): void;
-  validateCode(
+    chain: Chain,
+    signFn: SignFn
+  ): Promise<ActionCodeRevoke>;
+  async revoke(
     strategy: "delegation",
     actionCode: DelegatedActionCode,
-    context?: DelegatedContext<unknown>
-  ): void;
-  validateCode(
+    chain: Chain,
+    signFn: SignFn
+  ): Promise<DelegatedActionCodeRevoke>;
+  async revoke(
     strategy: "wallet" | "delegation",
     actionCode: ActionCode | DelegatedActionCode,
-    param2?: WalletContext<unknown> | DelegatedContext<unknown>
+    chain: Chain,
+    signFn: SignFn
+  ): Promise<ActionCodeRevoke | DelegatedActionCodeRevoke> {
+    if (!chain || !SUPPORTED_CHAINS.includes(chain)) {
+      throw ProtocolError.invalidAdapter(chain);
+    }
+
+    if (!signFn || typeof signFn !== "function") {
+      throw ProtocolError.invalidSignature("Missing signature function");
+    }
+
+    if (strategy === "wallet") {
+      const canonical = serializeCanonicalRevoke({
+        codeHash: codeHash(actionCode.code),
+        pubkey: actionCode.pubkey,
+        windowStart: actionCode.timestamp,
+      });
+      // For now we have to pass Solana as only chain
+      // later we will allow to pass the chain dynamically
+      const signature = await signFn(canonical, chain);
+
+      // Here param1 must be Uint8Array (canonical message)
+      if (!signature) {
+        throw ProtocolError.invalidSignature(
+          "Missing signature over canonical message"
+        );
+      }
+
+      return {
+        ...actionCode,
+        revokeSignature: signature,
+      };
+    } else {
+      const delegatedActionCode = actionCode as DelegatedActionCode;
+      const canonical = serializeCanonicalRevoke({
+        codeHash: codeHash(actionCode.code),
+        pubkey: delegatedActionCode.delegationProof.delegatedPubkey, // Use delegated pubkey for signature
+        windowStart: actionCode.timestamp,
+      });
+      const signature = await signFn(canonical, chain);
+
+      // Here param1 must be DelegationProof
+      if (!signature) {
+        throw ProtocolError.invalidSignature("Missing delegated signature");
+      }
+
+      return {
+        ...actionCode,
+        revokeSignature: signature,
+      };
+    }
+  }
+
+  // Overloaded validateCode methods with strategy parameter
+  validate(strategy: "wallet", actionCode: ActionCode): void;
+  validate(strategy: "delegation", actionCode: DelegatedActionCode): void;
+  validate(
+    strategy: "wallet" | "delegation",
+    actionCode: ActionCode | DelegatedActionCode
   ): void {
     if (strategy === "wallet") {
       // This will throw if validation fails
       this.walletStrategy.validateCode(actionCode as ActionCode);
 
-      if (!param2) return;
+      const adapter = this.getAdapter(actionCode.chain);
+      if (!adapter) throw ProtocolError.invalidAdapter(actionCode.chain);
 
-      const context = param2 as Omit<WalletContext<unknown>, "message">;
-      const adapter = this.getAdapter(context.chain);
-      if (!adapter) throw ProtocolError.invalidAdapter(context.chain);
-
-      const ok = adapter.verifyWithWallet({
-        ...(context as Record<string, unknown>),
-        message: {
-          pubkey: (actionCode as ActionCode).pubkey,
-          windowStart: (actionCode as ActionCode).timestamp,
-        },
-      } as unknown as WalletContext<unknown>);
+      const ok = adapter.verifyWithWallet(actionCode);
 
       if (!ok) {
         throw ProtocolError.invalidSignature(
@@ -142,26 +211,17 @@ export class ActionCodesProtocol {
         );
       }
     } else {
-      const context = param2 as Omit<DelegatedContext<unknown>, "message">;
-
-      // CRITICAL: First validate the delegated action code
-      // This ensures the code was actually generated from this delegation proof
       this.delegationStrategy.validateDelegatedCode(
-        actionCode as DelegatedActionCode,
-        context.delegationProof
+        actionCode as DelegatedActionCode
       );
 
       // Then verify the delegation proof signature
-      const adapter = this.getAdapter(context.chain);
-      if (!adapter) throw ProtocolError.invalidAdapter(context.chain);
+      const adapter = this.getAdapter(actionCode.chain);
+      if (!adapter) throw ProtocolError.invalidAdapter(actionCode.chain);
 
-      const ok = adapter.verifyWithDelegation({
-        ...(context as Record<string, unknown>),
-        message: {
-          pubkey: context.delegationProof.delegatedPubkey,
-          windowStart: (actionCode as ActionCode).timestamp,
-        },
-      } as unknown as DelegatedContext<unknown>);
+      const ok = adapter.verifyWithDelegation(
+        actionCode as DelegatedActionCode
+      );
 
       if (!ok) {
         throw ProtocolError.invalidSignature(

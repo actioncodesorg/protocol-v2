@@ -1,58 +1,29 @@
-import type {
-  CanonicalMessageParts,
-  CanonicalRevokeMessageParts,
-  DelegationProof,
-} from "../types";
+import type { ActionCode, DelegatedActionCode, Chain } from "../types";
 
-export interface BaseContext {
-  chain: string;
+export interface ChainAdapter {
+  verifyWithWallet(actionCode: ActionCode): boolean;
+  verifyWithDelegation(actionCode: DelegatedActionCode): boolean;
+  verifyRevokeWithWallet(
+    actionCode: ActionCode,
+    revokeSignature: string
+  ): boolean;
+  verifyRevokeWithDelegation(
+    actionCode: DelegatedActionCode,
+    revokeSignature: string
+  ): boolean;
 }
 
-export type WalletContext<TChain = unknown> = BaseContext &
-  TChain & {
-    message: CanonicalMessageParts;
-    walletSignature: string;
-  };
+export type SignFn = (message: Uint8Array, chain: Chain) => Promise<string>;
 
-export type DelegatedContext<TChain = unknown> = BaseContext &
-  TChain & {
-    message: CanonicalMessageParts;
-    delegatedSignature: string;
-    delegationProof: DelegationProof;
-  };
-
-export type WalletRevokeContext<TChain = unknown> = BaseContext &
-  TChain & {
-    message: CanonicalRevokeMessageParts;
-    walletSignature: string;
-  };
-
-export type DelegatedRevokeContext<TChain = unknown> = BaseContext &
-  TChain & {
-    message: CanonicalRevokeMessageParts;
-    delegatedSignature: string;
-    delegationProof: DelegationProof;
-  };
-
-export interface ChainAdapter<
-  TW = unknown,
-  DW = unknown,
-  RW = unknown,
-  RD = unknown
-> {
-  verifyWithWallet(context: WalletContext<TW>): boolean;
-  verifyWithDelegation(context: DelegatedContext<DW>): boolean;
-  verifyRevokeWithWallet(context: WalletRevokeContext<RW>): boolean;
-  verifyRevokeWithDelegation(context: DelegatedRevokeContext<RD>): boolean;
-}
-
-export abstract class BaseChainAdapter<TW, DW, RW, RD>
-  implements ChainAdapter<TW, DW, RW, RD>
-{
-  abstract verifyWithWallet(context: WalletContext<TW>): boolean;
-  abstract verifyWithDelegation(context: DelegatedContext<DW>): boolean;
-  abstract verifyRevokeWithWallet(context: WalletRevokeContext<RW>): boolean;
+export abstract class BaseChainAdapter implements ChainAdapter {
+  abstract verifyWithWallet(actionCode: ActionCode): boolean;
+  abstract verifyWithDelegation(actionCode: DelegatedActionCode): boolean;
+  abstract verifyRevokeWithWallet(
+    actionCode: ActionCode,
+    revokeSignature: string
+  ): boolean;
   abstract verifyRevokeWithDelegation(
-    context: DelegatedRevokeContext<RD>
+    actionCode: DelegatedActionCode,
+    revokeSignature: string
   ): boolean;
 }

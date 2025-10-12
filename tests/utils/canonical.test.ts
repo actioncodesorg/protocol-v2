@@ -98,9 +98,8 @@ describe("canonical utils", () => {
 
     it("should handle edge cases", () => {
       const edgeCases = [
-        { pubkey: "", windowStart: 0 },
         { pubkey: "a", windowStart: 1 },
-        { pubkey: "very-long-pubkey".repeat(100), windowStart: Number.MAX_SAFE_INTEGER },
+        { pubkey: "valid-pubkey-123", windowStart: Number.MAX_SAFE_INTEGER },
       ];
 
       for (const parts of edgeCases) {

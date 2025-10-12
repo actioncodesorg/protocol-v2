@@ -1,18 +1,7 @@
-import type {
-  ActionCode,
-  CodeGenerationConfig,
-  WalletStrategyCodeGenerationResult,
-} from "../types";
-import {
-  hmacSha256,
-  truncateBits,
-  digestToDigits,
-} from "../utils/crypto";
+import type { ActionCode, CodeGenerationConfig, Chain } from "../types";
+import { hmacSha256, truncateBits, digestToDigits } from "../utils/crypto";
 import { CODE_MAX_LENGTH, CODE_MIN_LENGTH } from "../constants";
-import {
-  serializeCanonical,
-  getCanonicalMessageParts,
-} from "../utils/canonical";
+import { serializeCanonical } from "../utils/canonical";
 import { ProtocolError } from "../errors";
 import bs58 from "bs58";
 
@@ -21,8 +10,9 @@ export class WalletStrategy {
 
   generateCode(
     canonicalMessage: Uint8Array,
+    chain: Chain,
     signature: string
-  ): WalletStrategyCodeGenerationResult {
+  ): ActionCode {
     const canonical = canonicalMessage;
 
     // Parse pubkey and windowStart from canonical message
@@ -49,6 +39,7 @@ export class WalletStrategy {
     const code = digestToDigits(truncated, clamped);
 
     const actionCode: ActionCode = {
+      chain,
       code,
       pubkey,
       timestamp: windowStart,
@@ -56,7 +47,7 @@ export class WalletStrategy {
       signature,
     };
 
-    return { actionCode, canonicalMessage: canonical };
+    return actionCode;
   }
 
   validateCode(actionCode: ActionCode): void {
@@ -78,7 +69,7 @@ export class WalletStrategy {
     if (!actionCode.signature) {
       throw ProtocolError.missingRequiredField("signature");
     }
-    
+
     // Use signature as the primary entropy source
     // Decode Base58 signature to bytes
     let signatureBytes: Uint8Array;
@@ -99,10 +90,5 @@ export class WalletStrategy {
     if (expected !== actionCode.code) {
       throw ProtocolError.invalidCode();
     }
-  }
-
-  // Instance method for accessing canonical functions
-  getCanonicalMessageParts(pubkey: string): Uint8Array {
-    return getCanonicalMessageParts(pubkey);
   }
 }

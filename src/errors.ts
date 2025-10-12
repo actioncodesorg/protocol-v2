@@ -151,7 +151,7 @@ export class ExpiredCodeError extends ProtocolError {
   constructor(code: string, expiresAt: number, currentTime: number) {
     super(
       ProtocolErrorCode.EXPIRED_CODE,
-      `Action code '${code}' expired at ${expiresAt}, current time: ${currentTime}`,
+      `Action code '${code}' has expired`,
       { code, expiresAt, currentTime }
     );
     this.name = "ExpiredCodeError";

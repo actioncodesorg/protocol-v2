@@ -1,8 +1,5 @@
 import { WalletStrategy } from "./WalletStrategy";
-import {
-  getCanonicalMessageParts,
-  serializeCanonical,
-} from "../utils/canonical";
+import { serializeCanonical } from "../utils/canonical";
 import { ProtocolError } from "../errors";
 import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
@@ -12,7 +9,7 @@ import type {
   DelegationProof,
   DelegatedActionCode,
   CodeGenerationConfig,
-  DelegationStrategyCodeGenerationResult,
+  Chain,
 } from "../types";
 
 export class DelegationStrategy {
@@ -29,30 +26,28 @@ export class DelegationStrategy {
    */
   generateDelegatedCode(
     delegationProof: DelegationProof,
+    canonicalMessage: Uint8Array,
+    chain: Chain,
     signature: string // this is the signature over message to generate code via delegated keypair
-  ): DelegationStrategyCodeGenerationResult {
+  ): DelegatedActionCode {
     // Validate delegation proof format and expiration
     this.validateDelegationProof(delegationProof);
 
-    // Generate canonical message using the delegated pubkey (the signer)
-    const canonicalMessage = getCanonicalMessageParts(delegationProof.delegatedPubkey);
-    
-    // Generate code using existing WalletStrategy with canonical message
+    // Generate code using existing WalletStrategy with the original canonical message
+    // The signature was created over this message by the delegated keypair
     const result = this.walletStrategy.generateCode(
       canonicalMessage,
-      signature // Use signature
+      chain,
+      signature // Use signature from delegated keypair
     );
 
     // Create delegated action code
     const delegatedActionCode: DelegatedActionCode = {
-      ...result.actionCode,
-      pubkey: delegationProof.walletPubkey, // Code belongs to the user who delegated
+      ...result,
       delegationProof: delegationProof,
     };
 
-    return {
-      actionCode: delegatedActionCode,
-    };
+    return delegatedActionCode;
   }
 
   /**
@@ -60,7 +55,6 @@ export class DelegationStrategy {
    */
   validateDelegatedCode(
     actionCode: DelegatedActionCode,
-    delegationProof: DelegationProof
   ): void {
     // Basic validation checks (similar to WalletStrategy.validateCode)
     const currentTime = Date.now();
@@ -73,36 +67,25 @@ export class DelegationStrategy {
     }
 
     // Verify delegation proof is still valid
-    this.validateDelegationProof(delegationProof);
+    this.validateDelegationProof(actionCode.delegationProof);
 
     // Verify the delegation proof matches the action code
-    if (
-      actionCode.pubkey !== delegationProof.walletPubkey ||
-      actionCode.pubkey !== actionCode.delegationProof.walletPubkey
-    ) {
-      throw ProtocolError.invalidInput(
-        "walletPubkey",
-        actionCode.delegationProof.walletPubkey,
-        "Action code wallet pubkey does not match delegation proof"
-      );
-    }
-
-    if (
-      actionCode.delegationProof.delegatedPubkey !==
-      delegationProof.delegatedPubkey
-    ) {
+    // The action code pubkey should be the delegated signer (who signed the message)
+    if (actionCode.pubkey !== actionCode.delegationProof.delegatedPubkey) {
       throw ProtocolError.invalidInput(
         "delegatedPubkey",
         actionCode.delegationProof.delegatedPubkey,
-        "Invalid delegatedPubkey: Action code delegated pubkey does not match delegation proof"
+        "Action code pubkey does not match delegated signer"
       );
     }
 
-    if (actionCode.delegationProof.expiresAt !== delegationProof.expiresAt) {
+    // Verify that the generated code doesn't expire after the delegation proof
+    // This prevents codes from outliving their authorization
+    if (actionCode.expiresAt > actionCode.delegationProof.expiresAt) {
       throw ProtocolError.invalidInput(
         "expiresAt",
-        actionCode.delegationProof.expiresAt,
-        "Action code delegation expiration does not match delegation proof"
+        actionCode.expiresAt,
+        "Action code cannot expire after delegation proof expiration"
       );
     }
 
@@ -111,18 +94,11 @@ export class DelegationStrategy {
       throw ProtocolError.missingRequiredField("delegationProof.signature");
     }
 
-    if (actionCode.delegationProof.signature !== delegationProof.signature) {
-      throw ProtocolError.invalidInput(
-        "signature",
-        actionCode.delegationProof.signature,
-        "Invalid signature: Action code delegation signature does not match delegation proof"
-      );
-    }
-
     // Finally, verify the delegated signature against the canonical message
-    // Use the original timestamp from the action code, not the current time
+    // The signature was created by signing a message with the DELEGATED pubkey
+    // even though the ActionCode.pubkey is the wallet owner
     const canonicalMessage = serializeCanonical({
-      pubkey: delegationProof.delegatedPubkey,
+      pubkey: actionCode.delegationProof.delegatedPubkey,
       windowStart: actionCode.timestamp,
     });
 
@@ -137,7 +113,7 @@ export class DelegationStrategy {
     }
 
     // Verify the signature using the delegated keypair's public key
-    const delegatedPubkeyBytes = bs58.decode(delegationProof.delegatedPubkey);
+    const delegatedPubkeyBytes = bs58.decode(actionCode.delegationProof.delegatedPubkey);
     const isValidSignature = nacl.sign.detached.verify(
       canonicalMessage,
       signatureBytes,
@@ -285,12 +261,5 @@ export class DelegationStrategy {
       );
     }
     // Note: Signature format validation will be done during actual verification
-  }
-
-  /**
-   * Get canonical message parts for delegation
-   */
-  getCanonicalMessageParts(pubkey: string): Uint8Array {
-    return getCanonicalMessageParts(pubkey);
   }
 }

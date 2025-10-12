@@ -2,12 +2,22 @@ import { ActionCodesProtocol } from "../src/ActionCodesProtocol";
 import { WalletStrategy } from "../src/strategy/WalletStrategy";
 import { hmacSha256 } from "../src/utils/crypto";
 import { serializeCanonical } from "../src/utils/canonical";
-import type { CodeGenerationConfig } from "../src/types";
+import type { CodeGenerationConfig, Chain } from "../src/types";
+import bs58 from "bs58";
+import nacl from "tweetnacl";
 
 // Helper function to create canonical message for testing
 function createCanonicalMessage(pubkey: string): Uint8Array {
   const windowStart = Math.floor(Date.now() / 120000) * 120000; // 2 minute TTL
   return serializeCanonical({ pubkey, windowStart });
+}
+
+// Helper function to create proper Base58 signatures for testing
+function createTestSignature(message: string): string {
+  const keypair = nacl.sign.keyPair();
+  const messageBytes = new TextEncoder().encode(message);
+  const signature = nacl.sign.detached(messageBytes, keypair.secretKey);
+  return bs58.encode(signature);
 }
 
 describe("Enhanced Security - Brute Force Resistance", () => {
@@ -29,42 +39,45 @@ describe("Enhanced Security - Brute Force Resistance", () => {
 
     test("generates different codes with different signatures", () => {
       const pubkey = "test-pubkey-security";
-      const signature1 = "testsignature1";
-      const signature2 = "testsignature2";
+      const signature1 = createTestSignature("testsignature1");
+      const signature2 = createTestSignature("testsignature2");
+      const chain: Chain = "solana";
 
       const canonicalMessage1 = createCanonicalMessage(pubkey);
       const canonicalMessage2 = createCanonicalMessage(pubkey);
       
-      const result1 = strategy.generateCode(canonicalMessage1, signature1);
-      const result2 = strategy.generateCode(canonicalMessage2, signature2);
+      const result1 = strategy.generateCode(canonicalMessage1, chain, signature1);
+      const result2 = strategy.generateCode(canonicalMessage2, chain, signature2);
 
       // Codes should be different due to different signatures
-      expect(result1.actionCode.code).not.toBe(result2.actionCode.code);
-      expect(result1.actionCode.signature).toBe(signature1);
-      expect(result2.actionCode.signature).toBe(signature2);
+      expect(result1.code).not.toBe(result2.code);
+      expect(result1.signature).toBe(signature1);
+      expect(result2.signature).toBe(signature2);
     });
 
     test("generates same codes with same signature (deterministic)", () => {
       const pubkey = "test-pubkey-deterministic";
-      const signature = "testsignature";
+      const signature = createTestSignature("testsignature");
+      const chain: Chain = "solana";
 
       const canonicalMessage = createCanonicalMessage(pubkey);
-      const result1 = strategy.generateCode(canonicalMessage, signature);
-      const result2 = strategy.generateCode(canonicalMessage, signature);
+      const result1 = strategy.generateCode(canonicalMessage, chain, signature);
+      const result2 = strategy.generateCode(canonicalMessage, chain, signature);
 
       // Should be identical
-      expect(result1.actionCode.code).toBe(result2.actionCode.code);
-      expect(result1.actionCode.timestamp).toBe(result2.actionCode.timestamp);
-      expect(result1.actionCode.signature).toBe(result2.actionCode.signature);
+      expect(result1.code).toBe(result2.code);
+      expect(result1.timestamp).toBe(result2.timestamp);
+      expect(result1.signature).toBe(result2.signature);
     });
 
     test("validates that signature is required", () => {
       const pubkey = "test-pubkey-signature-required";
       const canonicalMessage = createCanonicalMessage(pubkey);
+      const chain: Chain = "solana";
 
       // Should throw error if invalid signature provided
       expect(() => {
-        strategy.generateCode(canonicalMessage, "invalid-base58");
+        strategy.generateCode(canonicalMessage, chain, "invalid-base58");
       }).toThrow();
     });
   });
@@ -99,7 +112,8 @@ describe("Enhanced Security - Brute Force Resistance", () => {
   describe("Brute Force Resistance Analysis", () => {
     test("code space analysis for different lengths", () => {
       const pubkey = "test-pubkey-brute-force";
-      const signature = "testsignature";
+      const signature = createTestSignature("testsignature");
+      const chain: Chain = "solana";
 
       const lengths = [6, 8, 12, 16, 20, 24];
       const results: { length: number; code: string }[] = [];
@@ -111,8 +125,8 @@ describe("Enhanced Security - Brute Force Resistance", () => {
         });
 
         const canonicalMessage = createCanonicalMessage(pubkey);
-        const result = strategy.generateCode(canonicalMessage, signature);
-        results.push({ length, code: result.actionCode.code });
+        const result = strategy.generateCode(canonicalMessage, chain, signature);
+        results.push({ length, code: result.code });
       }
 
       // All codes should be different lengths
@@ -163,12 +177,14 @@ describe("Enhanced Security - Brute Force Resistance", () => {
   describe("Rate Limiting and Relayer Security", () => {
     test("simulates brute force attack with rate limiting", () => {
       const pubkey = "test-pubkey-rate-limit";
-      const signature = "testsignature";
+      const signature = createTestSignature("testsignature");
+      const chain: Chain = "solana";
       const validCode = new WalletStrategy({
         codeLength: 8,
         ttlMs: 120000,
       }).generateCode(
         createCanonicalMessage(pubkey),
+        chain,
         signature
       );
 
@@ -200,7 +216,7 @@ describe("Enhanced Security - Brute Force Resistance", () => {
           .padStart(8, "0");
 
         // Check if it matches (extremely unlikely)
-        if (randomCode === validCode.actionCode.code) {
+        if (randomCode === validCode.code) {
           return { success: true, attempts };
         }
 
@@ -232,6 +248,7 @@ describe("Enhanced Security - Brute Force Resistance", () => {
 
     test("validates that signature-based codes are secure", () => {
       const pubkey = "test-pubkey-signature-security";
+      const chain: Chain = "solana";
 
       const strategy = new WalletStrategy({
         codeLength: 8,
@@ -239,34 +256,35 @@ describe("Enhanced Security - Brute Force Resistance", () => {
       });
 
       // Generate codes with different signatures
-      const signature1 = "testsignature1";
-      const signature2 = "testsignature2";
+      const signature1 = createTestSignature("testsignature1");
+      const signature2 = createTestSignature("testsignature2");
       const canonicalMessage1 = createCanonicalMessage(pubkey);
       const canonicalMessage2 = createCanonicalMessage(pubkey);
       
-      const result1 = strategy.generateCode(canonicalMessage1, signature1);
-      const result2 = strategy.generateCode(canonicalMessage2, signature2);
+      const result1 = strategy.generateCode(canonicalMessage1, chain, signature1);
+      const result2 = strategy.generateCode(canonicalMessage2, chain, signature2);
 
       // Both should validate correctly
       expect(() => {
-        strategy.validateCode(result1.actionCode);
+        strategy.validateCode(result1);
       }).not.toThrow();
 
       expect(() => {
-        strategy.validateCode(result2.actionCode);
+        strategy.validateCode(result2);
       }).not.toThrow();
 
       // Signature-based codes should be different and unpredictable
-      expect(result1.actionCode.code).not.toBe(result2.actionCode.code);
-      expect(result1.actionCode.signature).toBe(signature1);
-      expect(result2.actionCode.signature).toBe(signature2);
+      expect(result1.code).not.toBe(result2.code);
+      expect(result1.signature).toBe(signature1);
+      expect(result2.signature).toBe(signature2);
     });
   });
 
   describe("Security Recommendations Validation", () => {
     test("validates minimum recommended code length", () => {
       const pubkey = "test-pubkey-min-length";
-      const signature = "testsignature";
+      const signature = createTestSignature("testsignature");
+      const chain: Chain = "solana";
 
       const strategy = new WalletStrategy({
         codeLength: 8,
@@ -275,10 +293,10 @@ describe("Enhanced Security - Brute Force Resistance", () => {
 
       // Test minimum recommended length (8 digits)
       const canonicalMessage = createCanonicalMessage(pubkey);
-      const result = strategy.generateCode(canonicalMessage, signature);
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
-      expect(result.actionCode.code).toHaveLength(8);
-      expect(result.actionCode.code).toMatch(/^\d+$/);
+      expect(result.code).toHaveLength(8);
+      expect(result.code).toMatch(/^\d+$/);
 
       // 8 digits = 10^8 = 100M possible codes
       // At 1M attempts/second, would take ~100 seconds to brute force
@@ -287,7 +305,8 @@ describe("Enhanced Security - Brute Force Resistance", () => {
 
     test("validates that longer codes are more secure", () => {
       const pubkey = "test-pubkey-length-comparison";
-      const signature = "testsignature";
+      const signature = createTestSignature("testsignature");
+      const chain: Chain = "solana";
 
       const strategy = new WalletStrategy({
         codeLength: 6,
@@ -295,7 +314,7 @@ describe("Enhanced Security - Brute Force Resistance", () => {
       });
 
       const canonicalMessage = createCanonicalMessage(pubkey);
-      const shortCode = strategy.generateCode(canonicalMessage, signature);
+      const shortCode = strategy.generateCode(canonicalMessage, chain, signature);
 
       const longStrategy = new WalletStrategy({
         codeLength: 12,
@@ -304,11 +323,12 @@ describe("Enhanced Security - Brute Force Resistance", () => {
 
       const longCode = longStrategy.generateCode(
         createCanonicalMessage(pubkey),
+        chain,
         signature
       );
 
-      expect(shortCode.actionCode.code).toHaveLength(6);
-      expect(longCode.actionCode.code).toHaveLength(12);
+      expect(shortCode.code).toHaveLength(6);
+      expect(longCode.code).toHaveLength(12);
 
       // Longer codes provide exponentially more security
       const shortEntropy = Math.log2(Math.pow(10, 6));
@@ -320,7 +340,8 @@ describe("Enhanced Security - Brute Force Resistance", () => {
 
     test("validates TTL provides adequate protection", () => {
       const pubkey = "test-pubkey-ttl";
-      const signature = "testsignature";
+      const signature = createTestSignature("testsignature");
+      const chain: Chain = "solana";
 
       const strategy = new WalletStrategy({
         codeLength: 8,
@@ -328,17 +349,17 @@ describe("Enhanced Security - Brute Force Resistance", () => {
       });
 
       const canonicalMessage = createCanonicalMessage(pubkey);
-      const result = strategy.generateCode(canonicalMessage, signature);
+      const result = strategy.generateCode(canonicalMessage, chain, signature);
 
       // Code should expire in 2 minutes
-      expect(result.actionCode.expiresAt - result.actionCode.timestamp).toBe(
+      expect(result.expiresAt - result.timestamp).toBe(
         120000
       );
 
       // Current time should be within valid range
       const now = Date.now();
-      expect(now).toBeGreaterThanOrEqual(result.actionCode.timestamp);
-      expect(now).toBeLessThanOrEqual(result.actionCode.expiresAt);
+      expect(now).toBeGreaterThanOrEqual(result.timestamp);
+      expect(now).toBeLessThanOrEqual(result.expiresAt);
     });
   });
 });
