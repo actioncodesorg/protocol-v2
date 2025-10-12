@@ -2,15 +2,15 @@
 // this shouldnt be exported from the package
 import { createSign, createVerify, createPublicKey, generateKeyPairSync, KeyObject } from "crypto";
 import bs58 from "bs58";
-import { BaseChainAdapter, type ChainWalletStrategyContext, type ChainDelegationStrategyContext } from "../../src/adapters/BaseChainAdapter";
+import { BaseChainAdapter } from "../../src/adapters/BaseChainAdapter";
 import {
   buildProtocolMeta,
   parseProtocolMeta,
   type ProtocolMetaFields,
 } from "../../src/utils/protocolMeta";
 import { codeHash } from "../../src/utils/crypto";
-import { serializeCanonical } from "../../src/utils/canonical";
-import type { ActionCode } from "../../src/types";
+import { serializeCanonical, serializeCanonicalRevoke } from "../../src/utils/canonical";
+import type { ActionCode, DelegatedActionCode, Chain } from "../../src/types";
 import { ProtocolError } from "../../src/errors";
 
 export type NodeCryptoContext = {
@@ -18,26 +18,29 @@ export type NodeCryptoContext = {
   signature: string; // Base58 encoded signature
 };
 
-export class NodeCryptoAdapter extends BaseChainAdapter<NodeCryptoContext, NodeCryptoContext> {
+export class NodeCryptoAdapter extends BaseChainAdapter {
   /** Verify the signature over canonical message using Node.js crypto */
-  verifyWithWallet(context: ChainWalletStrategyContext<NodeCryptoContext>): boolean {
-    if (context.chain !== "nodecrypto") return false;
-    if (!context.pubkey || !context.signature || !context.canonicalMessageParts) return false;
+  verifyWithWallet(actionCode: ActionCode): boolean {
+    if (actionCode.chain !== "nodecrypto") return false;
+    if (!actionCode.pubkey || !actionCode.signature) return false;
 
     try {
-      // Generate canonical message from parts
-      const canonicalMessage = serializeCanonical(context.canonicalMessageParts);
+      // Generate canonical message from action code
+      const canonicalMessage = serializeCanonical({
+        pubkey: actionCode.pubkey,
+        windowStart: actionCode.timestamp,
+      });
       
       // Create verifier with the public key
       const verifier = createVerify("SHA256");
       verifier.update(canonicalMessage);
       
       // Convert Base58 signature back to Base64 for verification
-      const signatureBytes = bs58.decode(context.signature);
+      const signatureBytes = bs58.decode(actionCode.signature);
       const base64Signature = Buffer.from(signatureBytes).toString('base64');
       
       // Verify the signature
-      const publicKey = createPublicKey(context.pubkey);
+      const publicKey = createPublicKey(actionCode.pubkey);
       const isValid = verifier.verify(publicKey, base64Signature, "base64");
       
       return isValid;
@@ -48,10 +51,98 @@ export class NodeCryptoAdapter extends BaseChainAdapter<NodeCryptoContext, NodeC
   }
 
   /** Verify delegation certificate signature */
-  verifyWithDelegation(_context: ChainDelegationStrategyContext<NodeCryptoContext>): boolean {
-    // For now, just return true as this is a demo adapter
-    // In a real implementation, this would verify the certificate signature
-    return true;
+  verifyWithDelegation(delegatedActionCode: DelegatedActionCode): boolean {
+    if (delegatedActionCode.chain !== "nodecrypto") return false;
+    if (!delegatedActionCode.pubkey || !delegatedActionCode.signature) return false;
+
+    try {
+      // Generate canonical message from delegated action code
+      const canonicalMessage = serializeCanonical({
+        pubkey: delegatedActionCode.pubkey,
+        windowStart: delegatedActionCode.timestamp,
+      });
+      
+      // Create verifier with the public key
+      const verifier = createVerify("SHA256");
+      verifier.update(canonicalMessage);
+      
+      // Convert Base58 signature back to Base64 for verification
+      const signatureBytes = bs58.decode(delegatedActionCode.signature);
+      const base64Signature = Buffer.from(signatureBytes).toString('base64');
+      
+      // Verify the signature
+      const publicKey = createPublicKey(delegatedActionCode.pubkey);
+      const isValid = verifier.verify(publicKey, base64Signature, "base64");
+      
+      return isValid;
+    } catch {
+      // Invalid public key format or signature
+      return false;
+    }
+  }
+
+  /** Verify revoke signature with wallet */
+  verifyRevokeWithWallet(actionCode: ActionCode, revokeSignature: string): boolean {
+    if (actionCode.chain !== "nodecrypto") return false;
+    if (!actionCode.pubkey || !revokeSignature) return false;
+
+    try {
+      // Generate canonical revoke message
+      const canonicalRevokeMessage = serializeCanonicalRevoke({
+        pubkey: actionCode.pubkey,
+        codeHash: codeHash(actionCode.code),
+        windowStart: actionCode.timestamp,
+      });
+      
+      // Create verifier with the public key
+      const verifier = createVerify("SHA256");
+      verifier.update(canonicalRevokeMessage);
+      
+      // Convert Base58 signature back to Base64 for verification
+      const signatureBytes = bs58.decode(revokeSignature);
+      const base64Signature = Buffer.from(signatureBytes).toString('base64');
+      
+      // Verify the signature
+      const publicKey = createPublicKey(actionCode.pubkey);
+      const isValid = verifier.verify(publicKey, base64Signature, "base64");
+      
+      return isValid;
+    } catch {
+      // Invalid public key format or signature
+      return false;
+    }
+  }
+
+  /** Verify revoke signature with delegation */
+  verifyRevokeWithDelegation(delegatedActionCode: DelegatedActionCode, revokeSignature: string): boolean {
+    if (delegatedActionCode.chain !== "nodecrypto") return false;
+    if (!delegatedActionCode.pubkey || !revokeSignature) return false;
+
+    try {
+      // Generate canonical revoke message
+      const canonicalRevokeMessage = serializeCanonicalRevoke({
+        pubkey: delegatedActionCode.pubkey,
+        codeHash: codeHash(delegatedActionCode.code),
+        windowStart: delegatedActionCode.timestamp,
+      });
+      
+      // Create verifier with the public key
+      const verifier = createVerify("SHA256");
+      verifier.update(canonicalRevokeMessage);
+      
+      // Convert Base58 signature back to Base64 for verification
+      const signatureBytes = bs58.decode(revokeSignature);
+      const base64Signature = Buffer.from(signatureBytes).toString('base64');
+      
+      // Verify the signature
+      const publicKey = createPublicKey(delegatedActionCode.pubkey);
+      const isValid = verifier.verify(publicKey, base64Signature, "base64");
+      
+      return isValid;
+    } catch {
+      // Invalid public key format or signature
+      return false;
+    }
   }
 
   /** Create a protocol meta instruction for NodeCrypto (simulated) */
