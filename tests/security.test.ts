@@ -19,7 +19,11 @@ describe("Security Review", () => {
     test("ActionCode objects only contain public data", async () => {
       const canonicalMessage = getCanonicalMessageParts("test-pubkey");
       const signature = "testsignature";
-      const { actionCode } = await protocol.generateCode("wallet", canonicalMessage, signature);
+      
+      // Create a simple signFn that returns the signature
+      const signFn = async (message: Uint8Array, chain: string) => signature;
+      
+      const actionCode = await protocol.generate("wallet", "test-pubkey", "solana", signFn);
       
       // Verify only public data is present
       expect(actionCode.code).toBeDefined();
@@ -41,7 +45,11 @@ describe("Security Review", () => {
     test("canonical messages are safe to serialize", async () => {
       const canonicalMessage = getCanonicalMessageParts("test-pubkey");
       const signature = "testsignature";
-      const { canonicalMessage: generatedMessage } = await protocol.generateCode("wallet", canonicalMessage, signature);
+      
+      // Create a simple signFn that returns the signature
+      const signFn = async (message: Uint8Array, chain: string) => signature;
+      
+      await protocol.generate("wallet", "test-pubkey", "solana", signFn);
       
       // Canonical message should only contain public data
       const decoded = new TextDecoder().decode(canonicalMessage);
@@ -215,7 +223,11 @@ describe("Security Review", () => {
     test("does not retain sensitive data in memory", async () => {
       const canonicalMessage = getCanonicalMessageParts("test-pubkey");
       const signature = "testsignature";
-      const { actionCode } = await protocol.generateCode("wallet", canonicalMessage, signature);
+      
+      // Create a simple signFn that returns the signature
+      const signFn = async (message: Uint8Array, chain: string) => signature;
+      
+      const actionCode = await protocol.generate("wallet", "test-pubkey", "solana", signFn);
       
       // Force garbage collection if available
       if (global.gc) {
