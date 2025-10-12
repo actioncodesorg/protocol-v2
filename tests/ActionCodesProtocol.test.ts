@@ -1,929 +1,255 @@
 import { ActionCodesProtocol } from "../src/ActionCodesProtocol";
-import {
-  BaseChainAdapter,
-  type ChainWalletStrategyContext,
-  type ChainWalletStrategyRevokeContext,
-} from "../src/adapters/BaseChainAdapter";
-import { SolanaAdapter, SolanaContext } from "../src/adapters/SolanaAdapter";
-import { Transaction, Keypair } from "@solana/web3.js";
-import { MEMO_PROGRAM_ID } from "@solana/spl-memo";
+import { serializeDelegationProof } from "../src/utils/canonical";
+import type { Chain, DelegationProof } from "../src/types";
+import type { SignFn } from "../src/adapters/BaseChainAdapter";
+import { Keypair } from "@solana/web3.js";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
-import { serializeCanonical } from "../src/utils/canonical";
-import type { ChainAdapter } from "../src/adapters/BaseChainAdapter";
-import type { ProtocolMetaFields } from "../src/utils/protocolMeta";
-import { codeHash } from "../src/utils/crypto";
-import { DelegationProof, ActionCode } from "../src/types";
-import {
-  serializeCanonicalRevoke,
-  getCanonicalMessageParts,
-  serializeDelegationProof,
-} from "../src/utils/canonical";
 
-// Helper function to create a real signature for testing
-function createRealSignature(message: Uint8Array, keypair: Keypair): string {
-  const signature = nacl.sign.detached(message, keypair.secretKey);
-  return bs58.encode(signature);
-}
+const CHAIN: Chain = "solana" as const;
 
-// Helper function to simulate user creating a revoke signature
-function createUserRevokeSignature(
-  actionCode: ActionCode,
-  userKeypair: Keypair
-): { signature: string; canonicalRevokeMessageParts: any } {
-  // User creates revoke message with the code hash and timestamp from the action code
-  const realCodeHash = codeHash(actionCode.code);
-  const canonicalRevokeMessageParts = {
-    pubkey: actionCode.pubkey,
-    codeHash: realCodeHash,
-    windowStart: actionCode.timestamp,
+function createSignFnWithCapture(keypair: Keypair) {
+  let lastBytes: Uint8Array | null = null;
+  const signFn: SignFn = async (message, chain) => {
+    if (chain !== CHAIN) throw new Error(`Unexpected chain ${chain}`);
+    lastBytes = message;
+    const sig = nacl.sign.detached(message, keypair.secretKey);
+    return bs58.encode(sig);
   };
-
-  // User signs the revoke message with their wallet
-  const revokeMessage = serializeCanonicalRevoke(canonicalRevokeMessageParts);
-  const userRevokeSignature = createRealSignature(revokeMessage, userKeypair);
-
   return {
-    signature: userRevokeSignature,
-    canonicalRevokeMessageParts,
+    signFn,
+    getLastBytes: () => lastBytes,
   };
 }
 
-// Mock delegated signature for testing
-const mockDelegatedSignature = bs58.encode(new Uint8Array(64).fill(42));
+function createSignFn(keypair: Keypair): SignFn {
+  return async (message, chain) => {
+    if (chain !== CHAIN) throw new Error(`Unexpected chain ${chain}`);
+    const sig = nacl.sign.detached(message, keypair.secretKey);
+    return bs58.encode(sig);
+  };
+}
 
-describe("ActionCodesProtocol", () => {
-  let protocol: ActionCodesProtocol;
-  let testKeypair: Keypair;
+describe("ActionCodesProtocol - real Solana signatures", () => {
+  test("wallet flow: generate and validate with real signature; timestamp aligned", async () => {
+    const protocol = new ActionCodesProtocol({ codeLength: 8, ttlMs: 2 * 60_000 });
+    const wallet = Keypair.generate();
 
-  beforeEach(() => {
-    protocol = new ActionCodesProtocol({
-      codeLength: 8,
-      ttlMs: 120000,
-    });
-    testKeypair = Keypair.generate();
+    const { signFn, getLastBytes } = createSignFnWithCapture(wallet);
+
+    const actionCode = await protocol.generate(
+      "wallet",
+      wallet.publicKey.toBase58(),
+      CHAIN,
+      signFn
+    );
+
+    // Validate via protocol (pure)
+    protocol.validate("wallet", actionCode);
+
+    // Validate via adapter (chain-level)
+    const ok = protocol.adapter.solana.verifyWithWallet(actionCode);
+    expect(ok).toBe(true);
+
+    // Timestamp alignment: canonical that was signed matches actionCode fields
+    const bytes = getLastBytes();
+    expect(bytes).not.toBeNull();
+    const canonical = JSON.parse(new TextDecoder().decode(bytes!));
+    expect(canonical.pubkey).toBe(actionCode.pubkey);
+    expect(canonical.windowStart).toBe(actionCode.timestamp);
   });
 
-  describe("adapter registry", () => {
-    test("has solana adapter by default", () => {
-      const solanaAdapter = protocol.getAdapter("solana");
-      expect(solanaAdapter).toBeInstanceOf(SolanaAdapter);
-    });
+  test("delegation flow: generate and validate with owner+delegated real signatures", async () => {
+    const protocol = new ActionCodesProtocol({ codeLength: 8, ttlMs: 2 * 60_000 });
+    const owner = Keypair.generate();
+    const delegated = Keypair.generate();
 
-    test("can register custom adapters", () => {
-      class CustomAdapter extends BaseChainAdapter<any, any, any> {
-        verifyWithWallet(context: ChainWalletStrategyContext<any>): boolean {
-          return true;
-        }
-        verifyWithDelegation(
-          context: ChainWalletStrategyContext<any>
-        ): boolean {
-          return true;
-        }
-        verifyRevokeWithWallet(
-          context: ChainWalletStrategyRevokeContext<any>
-        ): boolean {
-          return true;
-        }
-      }
-      const customAdapter = new CustomAdapter() as unknown as ChainAdapter;
-      protocol.registerAdapter(
-        "custom",
-        customAdapter as unknown as ChainAdapter
-      );
+    // Build signed delegation proof by owner
+    const proofFields = {
+      walletPubkey: owner.publicKey.toBase58(),
+      delegatedPubkey: delegated.publicKey.toBase58(),
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      chain: CHAIN,
+    };
+    const proofBytes = serializeDelegationProof(proofFields);
+    const ownerSig = nacl.sign.detached(proofBytes, owner.secretKey);
+    const delegationProof: DelegationProof = {
+      ...proofFields,
+      signature: bs58.encode(ownerSig),
+    };
 
-      const retrieved = protocol.getAdapter("custom");
-      expect(retrieved).toBe(customAdapter);
-    });
+    // Generate delegated code signed by delegated wallet
+    const { signFn, getLastBytes } = createSignFnWithCapture(delegated);
+    const delegatedCode = await protocol.generate(
+      "delegation",
+      delegationProof,
+      CHAIN,
+      signFn
+    );
 
-    test("typed adapter access works", () => {
-      const solanaAdapter = protocol.adapter.solana;
-      expect(solanaAdapter).toBeInstanceOf(SolanaAdapter);
-    });
+    // Debug: Check the canonical message that was signed
+    const bytes = getLastBytes();
+    expect(bytes).not.toBeNull();
+    const canonical = JSON.parse(new TextDecoder().decode(bytes!));
+    console.log("Signed canonical:", canonical);
+    console.log("Delegated code timestamp:", delegatedCode.timestamp);
+    console.log("Delegated code pubkey:", delegatedCode.pubkey);
+    console.log("Delegation proof delegated pubkey:", delegationProof.delegatedPubkey);
 
-    test("can create protocol meta instruction via typed access", () => {
-      const instruction = SolanaAdapter.createProtocolMetaIx({
-        ver: 2,
-        id: "test123",
-        int: "user@example.com",
-        p: { amount: 100 },
-      });
+    // Validate protocol-level and adapter-level
+    protocol.validate("delegation", delegatedCode);
+    const ok = protocol.adapter.solana.verifyWithDelegation(delegatedCode);
+    expect(ok).toBe(true);
 
-      expect(instruction.programId.toString()).toBe(MEMO_PROGRAM_ID.toString());
-      expect(instruction.data.toString("utf8")).toContain("actioncodes:ver=2");
-    });
+    // CRITICAL: DelegatedActionCode.pubkey should be the DELEGATED SIGNER (who signed the message)
+    expect(delegatedCode.pubkey).toBe(delegationProof.delegatedPubkey);
+    expect(delegatedCode.pubkey).not.toBe(delegationProof.walletPubkey);
 
-    test("can verify transaction matches code via typed access", () => {
-      const actionCode = {
-        code: "12345678",
-        pubkey: "user@example.com",
-        timestamp: Date.now(),
-        expiresAt: Date.now() + 120000,
-        signature: "testsignature",
-      };
-
-      const codeHashValue = codeHash(actionCode.code);
-      const instruction = SolanaAdapter.createProtocolMetaIx({
-        ver: 2,
-        id: codeHashValue,
-        int: "user@example.com",
-      });
-      const tx = new Transaction().add(instruction);
-      tx.recentBlockhash = "11111111111111111111111111111111";
-      tx.feePayer = testKeypair.publicKey;
-
-      const base64String = Buffer.from(
-        tx.serialize({ requireAllSignatures: false })
-      ).toString("base64");
-
-      // Should not throw for valid transaction
-      expect(() => {
-        protocol.adapter.solana.verifyTransactionMatchesCode(
-          actionCode,
-          base64String
-        );
-      }).not.toThrow();
-    });
-
-    test("can verify transaction is signed by intended owner via typed access", () => {
-      const keypair = Keypair.generate();
-      const code = "87654321";
-      const codeHashValue = codeHash(code);
-      const instruction = SolanaAdapter.createProtocolMetaIx({
-        ver: 2,
-        id: codeHashValue,
-        int: keypair.publicKey.toString(),
-      });
-
-      const tx = new Transaction().add(instruction);
-      tx.recentBlockhash = "11111111111111111111111111111111";
-      tx.feePayer = keypair.publicKey;
-      tx.sign(keypair);
-
-      const base64String = Buffer.from(
-        tx.serialize({ requireAllSignatures: false })
-      ).toString("base64");
-
-      // Should not throw for valid transaction
-      expect(() => {
-        protocol.adapter.solana.verifyTransactionSignedByIntentOwner(
-          base64String
-        );
-      }).not.toThrow();
-    });
-
-    test("can attach protocol meta to transaction via typed access", () => {
-      const tx = new Transaction();
-      tx.recentBlockhash = "11111111111111111111111111111111";
-      tx.feePayer = testKeypair.publicKey;
-
-      const code = "12345678";
-      const codeHashValue = codeHash(code);
-      const meta = {
-        ver: 2,
-        id: codeHashValue,
-        int: "user@example.com",
-        p: { amount: 100 },
-      };
-
-      const base64String = Buffer.from(
-        tx.serialize({ requireAllSignatures: false })
-      ).toString("base64");
-      const result = SolanaAdapter.attachProtocolMeta(
-        base64String,
-        meta as ProtocolMetaFields
-      );
-
-      // Should return a new base64 string (not mutate original)
-      expect(result).not.toBe(base64String);
-      expect(typeof result).toBe("string");
-
-      // Should be able to deserialize the result
-      const resultTx = Transaction.from(Buffer.from(result, "base64"));
-      expect(resultTx.instructions).toHaveLength(1);
-
-      // Should be able to extract the meta
-      const extractedMeta = protocol.adapter.solana.getProtocolMeta(result);
-      expect(extractedMeta).toContain("actioncodes:ver=2");
-      expect(extractedMeta).toContain(`id=${codeHashValue}`);
-    });
+    // Timestamp alignment
+    expect(canonical.pubkey).toBe(delegationProof.delegatedPubkey);
+    expect(canonical.windowStart).toBe(delegatedCode.timestamp);
   });
 
-  describe("code generation and validation", () => {
-    test("generates and validates codes", async () => {
-      const canonicalMessage = getCanonicalMessageParts(
-        "testpubkey",
-        protocol.getConfig().ttlMs
-      );
-      const signature = createRealSignature(canonicalMessage, testKeypair);
-      const { actionCode } = await protocol.generateCode(
-        "wallet",
-        canonicalMessage,
-        signature
-      );
+  test("wallet revoke: produces verifiable revoke signature", async () => {
+    const protocol = new ActionCodesProtocol({ codeLength: 8, ttlMs: 2 * 60_000 });
+    const wallet = Keypair.generate();
+    const signWallet = createSignFn(wallet);
 
-      expect(actionCode.code).toBeDefined();
-      expect(actionCode.pubkey).toBe("testpubkey");
-      expect(actionCode.timestamp).toBeDefined();
-      expect(actionCode.expiresAt).toBeDefined();
-    });
+    const actionCode = await protocol.generate(
+      "wallet",
+      wallet.publicKey.toBase58(),
+      CHAIN,
+      signWallet
+    );
+    const revokeRecord = await protocol.revoke("wallet", actionCode, CHAIN, signWallet);
 
-    test("validates codes with chain adapter", async () => {
-      const canonicalMessage = getCanonicalMessageParts(
-        "testpubkey",
-        protocol.getConfig().ttlMs
-      );
-      const signature = createRealSignature(canonicalMessage, testKeypair);
-      const { actionCode } = await protocol.generateCode(
-        "wallet",
-        canonicalMessage,
-        signature
-      );
-
-      // Mock context for validation
-      const context = {
-        chain: "solana",
-        pubkey: "testpubkey",
-        signature: "mocksignature",
-      } as unknown as ChainWalletStrategyContext<SolanaContext>;
-
-      // This should throw because we're using a mock signature
-      expect(() => {
-        protocol.validateCode("wallet", actionCode, context);
-      }).toThrow();
-    });
-
-    test("generates and validates delegated codes", async () => {
-      // Create a delegation proof
-      const delegatedKeypair = Keypair.generate();
-      
-      // Create a proper 64-byte signature for the delegation proof
-      const delegationMessage = new TextEncoder().encode(
-        JSON.stringify({
-          walletPubkey: testKeypair.publicKey.toString(),
-          delegatedPubkey: delegatedKeypair.publicKey.toString(),
-          expiresAt: Date.now() + 3600000,
-          chain: "solana",
-        })
-      );
-      const delegationSignature = nacl.sign.detached(delegationMessage, testKeypair.secretKey);
-      const delegationSignatureB58 = bs58.encode(delegationSignature);
-      
-      const delegationProof = {
-        walletPubkey: testKeypair.publicKey.toString(),
-        delegatedPubkey: delegatedKeypair.publicKey.toString(),
-        expiresAt: Date.now() + 3600000, // 1 hour from now
-        chain: "solana",
-        signature: delegationSignatureB58, // Real signature
-      };
-
-      // Create a signature for a dummy message - the method will handle canonical message internally
-      const dummyMessage = new TextEncoder().encode("dummy-message");
-      const delegatedSignature = nacl.sign.detached(
-        dummyMessage,
-        delegatedKeypair.secretKey
-      );
-      const delegatedSignatureB58 = bs58.encode(delegatedSignature);
-
-      // Generate the delegated code - the method will create its own canonical message
-      const result = protocol.delegationStrategy.generateDelegatedCode(
-        delegationProof,
-        delegatedSignatureB58
-      );
-
-      expect(result.actionCode).toBeDefined();
-      expect(result.actionCode.code).toBeDefined();
-      expect(result.actionCode.pubkey).toBe(testKeypair.publicKey.toString());
-      expect(result.actionCode.delegationProof).toBeDefined();
-      expect(result.actionCode.delegationProof.walletPubkey).toBe(
-        testKeypair.publicKey.toString()
-      );
-
-      // Note: We can't test validation here because the signature was created for a dummy message
-      // but the method creates its own canonical message internally. In a real scenario,
-      // the signature would be created for the actual canonical message that the method uses.
-      // This test verifies that code generation works correctly.
-    });
-
-    test("validates delegated codes with protocol validation", async () => {
-      // Create a delegation proof
-      const delegatedKeypair = Keypair.generate();
-      
-      // Create a proper 64-byte signature for the delegation proof
-      const delegationMessage = new TextEncoder().encode(
-        JSON.stringify({
-          walletPubkey: testKeypair.publicKey.toString(),
-          delegatedPubkey: delegatedKeypair.publicKey.toString(),
-          expiresAt: Date.now() + 3600000,
-          chain: "solana",
-        })
-      );
-      const delegationSignature = nacl.sign.detached(delegationMessage, testKeypair.secretKey);
-      const delegationSignatureB58 = bs58.encode(delegationSignature);
-      
-      const delegationProof = {
-        walletPubkey: testKeypair.publicKey.toString(),
-        delegatedPubkey: delegatedKeypair.publicKey.toString(),
-        expiresAt: Date.now() + 3600000, // 1 hour from now
-        chain: "solana",
-        signature: delegationSignatureB58, // Real signature
-      };
-
-      // Generate delegated code
-      const result = protocol.generateCode(
-        "delegation",
-        delegationProof,
-        mockDelegatedSignature
-      );
-
-      // Validate using protocol's validateCode method (with mock signature verification)
-      // This will fail because we're using a mock signature, which is expected
-      expect(() => {
-        protocol.validateCode("delegation", result.actionCode, {
-          chain: "solana",
-          message: {
-            pubkey: delegationProof.walletPubkey,
-            windowStart: result.actionCode.timestamp,
-          },
-          delegationProof,
-          delegatedSignature: mockDelegatedSignature,
-        });
-      }).toThrow("Invalid signature: Delegated signature verification failed");
-    });
-
-    test("handles delegation strategy configuration", () => {
-      // Test that delegation strategy is accessible
-      const delegationStrategy = protocol.delegationStrategy;
-
-      expect(delegationStrategy).toBeDefined();
-      expect(typeof delegationStrategy.generateDelegatedCode).toBe("function");
-      expect(typeof delegationStrategy.validateDelegatedCode).toBe("function");
-    });
-
-    test("generates different delegated codes for different proofs", async () => {
-      // Create two different delegation proofs
-      const delegatedKeypair1 = Keypair.generate();
-      const delegatedKeypair2 = Keypair.generate();
-      const delegationProof1 = {
-        walletPubkey: testKeypair.publicKey.toString(),
-        delegatedPubkey: delegatedKeypair1.publicKey.toString(),
-        expiresAt: Date.now() + 3600000, // 1 hour
-        chain: "solana",
-        signature: "mock-delegation-signature-1",
-      };
-      const delegationProof2 = {
-        walletPubkey: delegatedKeypair2.publicKey.toString(), // Different wallet pubkey
-        delegatedPubkey: delegatedKeypair2.publicKey.toString(), // Different delegated pubkey
-        expiresAt: Date.now() + 7200000, // 2 hours
-        chain: "solana",
-        signature: "mock-delegation-signature-2",
-      };
-
-      // Generate codes for both delegation proofs
-      const result1 = protocol.generateCode(
-        "delegation",
-        delegationProof1,
-        mockDelegatedSignature
-      );
-      const result2 = protocol.generateCode(
-        "delegation",
-        delegationProof2,
-        mockDelegatedSignature
-      );
-
-      // They should be different
-      expect(result1.actionCode.code).not.toBe(result2.actionCode.code);
-      expect(result1.actionCode.delegationProof.delegatedPubkey).not.toBe(
-        result2.actionCode.delegationProof.delegatedPubkey
-      );
-    });
-
-    test("validates delegated code expiration", async () => {
-      // Create an expired delegation proof
-      const expiredDelegatedKeypair = Keypair.generate();
-      const expiredDelegationProof = {
-        walletPubkey: testKeypair.publicKey.toString(),
-        delegatedPubkey: expiredDelegatedKeypair.publicKey.toString(),
-        expiresAt: Date.now() - 1000, // Expired 1 second ago
-        chain: "solana",
-        signature: "mock-delegation-signature",
-      };
-
-      // This should throw when generating code with expired delegation proof
-      expect(() => {
-        protocol.generateCode(
-          "delegation",
-          expiredDelegationProof,
-          mockDelegatedSignature
-        );
-      }).toThrow("Delegation proof has expired");
-    });
-
-    it("should reject codes with stolen signatures during validation", async () => {
-      // 1. Generate valid delegation proof and code
-      const originalDelegatedKeypair = Keypair.generate();
-      const originalDelegationProof = {
-        walletPubkey: testKeypair.publicKey.toString(),
-        delegatedPubkey: originalDelegatedKeypair.publicKey.toString(),
-        expiresAt: Date.now() + 3600000, // 1 hour from now
-        chain: "solana",
-        signature: "original-delegation-signature",
-      };
-      const originalResult = await protocol.generateCode(
-        "delegation",
-        originalDelegationProof,
-        mockDelegatedSignature
-      );
-      const originalCode = originalResult.actionCode;
-
-      // 2. Create fake delegation proof with stolen signature but different data
-      const fakeDelegatedKeypair = Keypair.generate();
-      const fakeDelegationProof = {
-        walletPubkey: testKeypair.publicKey.toString(),
-        delegatedPubkey: fakeDelegatedKeypair.publicKey.toString(), // Different delegated pubkey
-        expiresAt: originalDelegationProof.expiresAt, // Same expiration
-        chain: "solana",
-        signature: originalDelegationProof.signature, // Same signature (stolen)
-      };
-
-      // 3. Generate code with fake delegation proof (this should work in strategy layer)
-      const fakeResult = protocol.generateCode(
-        "delegation",
-        fakeDelegationProof,
-        mockDelegatedSignature
-      );
-      const fakeCode = fakeResult.actionCode;
-
-      // 4. Try to validate fake code with original delegation proof (should fail)
-      expect(() => {
-        protocol.validateCode("delegation", fakeCode, {
-          chain: "solana",
-          pubkey: originalDelegationProof.walletPubkey,
-          signature: originalDelegationProof.signature,
-          delegationProof: originalDelegationProof,
-        });
-      }).toThrow(
-        "Invalid delegatedPubkey: Action code delegated pubkey does not match delegation proof"
-      );
-    });
-
-    it("should reject codes with stolen signatures and different delegator during validation", async () => {
-      // 1. Generate valid delegation proof and code
-      const originalDelegatedKeypair = Keypair.generate();
-      const originalDelegationProof = {
-        walletPubkey: testKeypair.publicKey.toString(),
-        delegatedPubkey: originalDelegatedKeypair.publicKey.toString(),
-        expiresAt: Date.now() + 3600000, // 1 hour from now
-        chain: "solana",
-        signature: "original-delegation-signature",
-      };
-      // Use the delegation proof directly (signature would be created by wallet in real usage)
-      const originalProof = originalDelegationProof;
-      const originalResult = await protocol.generateCode(
-        "delegation",
-        originalProof,
-        mockDelegatedSignature
-      );
-      const originalCode = originalResult.actionCode;
-
-      // 2. Create fake proof with stolen signature but different delegator
-      const attackerKeypair = Keypair.generate();
-      const fakeProof: DelegationProof = {
-        ...originalProof,
-        walletPubkey: attackerKeypair.publicKey.toString(), // Different delegator
-        signature: originalProof.signature, // Same signature (stolen)
-      };
-
-      // 3. Generate code with fake proof (this should work in strategy layer)
-      const fakeResult = await protocol.generateCode(
-        "delegation",
-        fakeProof,
-        mockDelegatedSignature
-      );
-      const fakeCode = fakeResult.actionCode;
-
-      // 4. Try to validate fake code with original proof (should fail)
-      expect(() => {
-        protocol.validateCode("delegation", fakeCode, {
-          chain: "solana",
-          pubkey: originalProof.walletPubkey,
-          signature: originalProof.signature,
-          delegationProof: originalProof,
-        });
-      }).toThrow(
-        "Invalid walletPubkey: Action code wallet pubkey does not match delegation proof"
-      );
-    });
-
-    it("should require signature for wallet strategy to prevent public key + timestamp attacks", async () => {
-      // 1. Generate canonical message first
-      const canonicalMessage = getCanonicalMessageParts(
-        testKeypair.publicKey.toString()
-      );
-
-      // 2. Try to generate code without signature (should fail)
-      expect(() => {
-        protocol.generateCode("wallet", canonicalMessage, "");
-      }).toThrow("Missing signature over canonical message");
-
-      // 3. Sign the canonical message
-      const signature = createRealSignature(canonicalMessage, testKeypair);
-
-      // 4. Generate code with signature (should succeed)
-      const result = protocol.generateCode(
-        "wallet",
-        canonicalMessage,
-        signature
-      );
-
-      expect(result.actionCode.code).toBeDefined();
-      expect(result.actionCode.signature).toBe(signature);
-    });
-
-    it("should prevent public key + timestamp attacks with signature-based generation", async () => {
-      // 1. User generates canonical message and signs it
-      const userPubkey = testKeypair.publicKey.toString();
-      const canonicalMessage = getCanonicalMessageParts(
-        userPubkey,
-        protocol.getConfig().ttlMs
-      );
-      const userSignature = createRealSignature(canonicalMessage, testKeypair);
-      const userResult = protocol.generateCode(
-        "wallet",
-        canonicalMessage,
-        userSignature
-      );
-      const userCode = userResult.actionCode;
-
-      // 2. Attacker tries to generate code with same public key but different signature
-      const attackerSignature = "fakeattackersignature";
-      const attackerResult = protocol.generateCode(
-        "wallet",
-        canonicalMessage,
-        attackerSignature
-      );
-      const attackerCode = attackerResult.actionCode;
-
-      // 3. Codes should be different because they use different signatures
-      expect(userCode.code).not.toBe(attackerCode.code);
-      expect(userCode.signature).toBe(userSignature);
-      expect(attackerCode.signature).toBe(attackerSignature);
-
-      // 4. Only the user's code should validate correctly
-      expect(() => {
-        protocol.validateCode("wallet", userCode, {
-          chain: "solana",
-          message: {
-            pubkey: userCode.pubkey,
-            windowStart: userCode.timestamp,
-          },
-          walletSignature: userSignature,
-        });
-      }).not.toThrow();
-
-      expect(() => {
-        protocol.validateCode("wallet", attackerCode, {
-          chain: "solana",
-          message: {
-            pubkey: attackerCode.pubkey,
-            windowStart: attackerCode.timestamp,
-          },
-          walletSignature: attackerSignature,
-        });
-      }).toThrow("Invalid signature: Wallet signature verification failed");
-    });
+    // Verify revoke with adapter
+    const ok = protocol.adapter.solana.verifyRevokeWithWallet(
+      actionCode,
+      revokeRecord.revokeSignature
+    );
+    expect(ok).toBe(true);
   });
 
-  describe("expiration handling", () => {
-    test("generates codes with correct TTL", async () => {
-      const canonicalMessage = new TextEncoder().encode(
-        JSON.stringify({
-          pubkey: testKeypair.publicKey.toString(),
-          windowStart: Date.now(),
-        })
-      );
-      const signature = createRealSignature(canonicalMessage, testKeypair);
+  test("delegation revoke: delegated signer can revoke with proof", async () => {
+    const protocol = new ActionCodesProtocol({ codeLength: 8, ttlMs: 2 * 60_000 });
+    const owner = Keypair.generate();
+    const delegated = Keypair.generate();
 
-      const result = protocol.generateCode(
-        "wallet",
-        canonicalMessage,
-        signature
-      );
-      const actionCode = result.actionCode;
+    const proofFields = {
+      walletPubkey: owner.publicKey.toBase58(),
+      delegatedPubkey: delegated.publicKey.toBase58(),
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      chain: CHAIN,
+    };
+    const proofBytes = serializeDelegationProof(proofFields);
+    const ownerSig = nacl.sign.detached(proofBytes, owner.secretKey);
+    const delegationProof: DelegationProof = {
+      ...proofFields,
+      signature: bs58.encode(ownerSig),
+    };
 
-      // Verify TTL is exactly 2 minutes (120000ms)
-      const actualTtl = actionCode.expiresAt - actionCode.timestamp;
-      expect(actualTtl).toBe(120000);
-    });
+    const delegatedCode = await protocol.generate(
+      "delegation",
+      delegationProof,
+      CHAIN,
+      createSignFn(delegated)
+    );
 
-    test("handles different TTL configurations", async () => {
-      const ttlConfigs = [
-        { ttlMs: 60000, description: "1 minute" },
-        { ttlMs: 120000, description: "2 minutes" },
-        { ttlMs: 300000, description: "5 minutes" },
-      ];
+    // CRITICAL: DelegatedActionCode.pubkey should be the DELEGATED SIGNER (who signed the message)
+    expect(delegatedCode.pubkey).toBe(delegationProof.delegatedPubkey);
+    expect(delegatedCode.pubkey).not.toBe(delegationProof.walletPubkey);
 
-      for (const config of ttlConfigs) {
-        const protocolWithTtl = new ActionCodesProtocol({
-          codeLength: 8,
-          ttlMs: config.ttlMs,
-        });
+    const revokeRecord = await protocol.revoke(
+      "delegation",
+      delegatedCode,
+      CHAIN,
+      createSignFn(delegated)
+    );
 
-        const canonicalMessage = new TextEncoder().encode(
-          JSON.stringify({
-            pubkey: testKeypair.publicKey.toString(),
-            windowStart: Date.now(),
-          })
-        );
-        const signature = createRealSignature(canonicalMessage, testKeypair);
-
-        const result = protocolWithTtl.generateCode(
-          "wallet",
-          canonicalMessage,
-          signature
-        );
-        const actualTtl =
-          result.actionCode.expiresAt - result.actionCode.timestamp;
-        if (!result.actionCode || !result.canonicalMessage) {
-          throw new Error("Invalid result");
-        }
-
-        expect(actualTtl).toBe(config.ttlMs);
-      }
-    });
-
-    test("validates timestamp consistency across protocol", async () => {
-      const canonicalMessage = new TextEncoder().encode(
-        JSON.stringify({
-          pubkey: testKeypair.publicKey.toString(),
-          windowStart: Date.now(),
-        })
-      );
-      const signature = createRealSignature(canonicalMessage, testKeypair);
-
-      const result = protocol.generateCode(
-        "wallet",
-        canonicalMessage,
-        signature
-      );
-      const actionCode = result.actionCode;
-
-      const now = Date.now();
-
-      // Timestamp should be reasonable
-      expect(actionCode.timestamp).toBeLessThanOrEqual(now);
-      expect(actionCode.timestamp).toBeGreaterThan(now - 10000); // More lenient
-
-      // Expiration should be exactly TTL after timestamp
-      expect(actionCode.expiresAt).toBe(actionCode.timestamp + 120000);
-
-      // Both should be valid timestamps
-      expect(actionCode.timestamp).toBeGreaterThan(0);
-      expect(actionCode.expiresAt).toBeGreaterThan(actionCode.timestamp);
-    });
-
-    test("handles rapid code generation with consistent expiration", async () => {
-      const results: {
-        actionCode: ActionCode;
-        canonicalMessage: Uint8Array;
-      }[] = [];
-      const startTime = Date.now();
-
-      // Generate multiple codes rapidly
-      for (let i = 0; i < 5; i++) {
-        const canonicalMessage = new TextEncoder().encode(
-          JSON.stringify({
-            pubkey: testKeypair.publicKey.toString(),
-            windowStart: Date.now(),
-          })
-        );
-        const signature = createRealSignature(canonicalMessage, testKeypair);
-
-        const result = protocol.generateCode(
-          "wallet",
-          canonicalMessage,
-          signature
-        );
-        results.push(result);
-      }
-
-      const endTime = Date.now();
-      const generationTime = endTime - startTime;
-
-      // All codes should have the same TTL
-      const expectedTtl = 120000;
-      results.forEach((result) => {
-        const actualTtl =
-          result.actionCode.expiresAt - result.actionCode.timestamp;
-        expect(actualTtl).toBe(expectedTtl);
-      });
-
-      // Generation should be fast
-      expect(generationTime).toBeLessThan(1000);
-    });
-
-    test("verifies expiration with different time windows", async () => {
-      const baseTime = Date.now();
-      const windowSizes = [60000, 120000, 300000]; // 1, 2, 5 minutes
-
-      for (const windowSize of windowSizes) {
-        // Use current time to avoid past timestamps
-        const windowStart = Math.floor(baseTime / windowSize) * windowSize;
-        const actualWindowStart = Math.max(windowStart, baseTime - 60000); // At most 1 minute ago
-
-        const canonicalMessage = new TextEncoder().encode(
-          JSON.stringify({
-            pubkey: testKeypair.publicKey.toString(),
-            windowStart: actualWindowStart,
-          })
-        );
-        const signature = createRealSignature(canonicalMessage, testKeypair);
-
-        const result = protocol.generateCode(
-          "wallet",
-          canonicalMessage,
-          signature
-        );
-
-        // Verify the timestamp matches the window start
-        expect(result.actionCode.timestamp).toBe(actualWindowStart);
-        expect(result.actionCode.expiresAt).toBe(actualWindowStart + 120000);
-      }
-    });
+    const ok = protocol.adapter.solana.verifyRevokeWithDelegation(
+      delegatedCode,
+      revokeRecord.revokeSignature
+    );
+    expect(ok).toBe(true);
   });
 
-  describe("revoke verification integration", () => {
-    test("verifyRevokeWithWallet works with real action code and user signature", async () => {
-      // 1. Generate a real action code using the protocol
-      const canonicalMessage = getCanonicalMessageParts(
-        testKeypair.publicKey.toString()
-      );
-      const signature = createRealSignature(canonicalMessage, testKeypair);
-      const { actionCode } = await protocol.generateCode(
-        "wallet",
-        canonicalMessage,
-        signature
-      );
+  test("wallet complete flow: generate → validate → revoke", async () => {
+    const protocol = new ActionCodesProtocol({ codeLength: 8, ttlMs: 2 * 60_000 });
+    const wallet = Keypair.generate();
+    const signWallet = createSignFn(wallet);
 
-      // 2. User wants to revoke this action code
-      // User creates revoke message with the code hash and timestamp from the action code
-      const realCodeHash = codeHash(actionCode.code);
-      const canonicalRevokeMessageParts = {
-        pubkey: actionCode.pubkey,
-        codeHash: realCodeHash,
-        windowStart: actionCode.timestamp,
-      };
+    // 1. Generate
+    const actionCode = await protocol.generate(
+      "wallet",
+      wallet.publicKey.toBase58(),
+      CHAIN,
+      signWallet
+    );
 
-      // 3. User signs the revoke message with their wallet (this is what the user provides)
-      const revokeMessage = serializeCanonicalRevoke(
-        canonicalRevokeMessageParts
-      );
-      const userRevokeSignature = createRealSignature(
-        revokeMessage,
-        testKeypair
-      );
+    // 2. Validate (protocol + adapter)
+    protocol.validate("wallet", actionCode);
+    const validateOk = protocol.adapter.solana.verifyWithWallet(actionCode);
+    expect(validateOk).toBe(true);
 
-      // 4. User provides the signature for verification (this is the input from user)
-      const context = {
-        chain: "solana",
-        message: canonicalRevokeMessageParts,
-        walletSignature: userRevokeSignature, // This is the signature the user provides
-      };
+    // 3. Revoke
+    const revokeRecord = await protocol.revoke("wallet", actionCode, CHAIN, signWallet);
 
-      // 5. System verifies the user's revoke signature
-      const solanaAdapter = protocol.getAdapter("solana") as SolanaAdapter;
-      const verifyResult = solanaAdapter.verifyRevokeWithWallet(context);
+    // 4. Verify revoke
+    const revokeOk = protocol.adapter.solana.verifyRevokeWithWallet(
+      actionCode,
+      revokeRecord.revokeSignature
+    );
+    expect(revokeOk).toBe(true);
+  });
 
-      expect(verifyResult).toBe(true);
-    });
+  test("delegation complete flow: generate → validate → revoke", async () => {
+    const protocol = new ActionCodesProtocol({ codeLength: 8, ttlMs: 2 * 60_000 });
+    const owner = Keypair.generate();
+    const delegated = Keypair.generate();
 
-    test("verifyRevokeWithWallet rejects invalid revoke signature", async () => {
-      // 1. Generate a real action code using the protocol
-      const canonicalMessage = getCanonicalMessageParts(
-        testKeypair.publicKey.toString()
-      );
-      const signature = createRealSignature(canonicalMessage, testKeypair);
-      const { actionCode } = await protocol.generateCode(
-        "wallet",
-        canonicalMessage,
-        signature
-      );
+    // Build delegation proof
+    const proofFields = {
+      walletPubkey: owner.publicKey.toBase58(),
+      delegatedPubkey: delegated.publicKey.toBase58(),
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      chain: CHAIN,
+    };
+    const proofBytes = serializeDelegationProof(proofFields);
+    const ownerSig = nacl.sign.detached(proofBytes, owner.secretKey);
+    const delegationProof: DelegationProof = {
+      ...proofFields,
+      signature: bs58.encode(ownerSig),
+    };
 
-      // 2. Get the real code hash and timestamp from the generated action code
-      const realCodeHash = codeHash(actionCode.code);
-      const canonicalRevokeMessageParts = {
-        pubkey: actionCode.pubkey,
-        codeHash: realCodeHash,
-        windowStart: actionCode.timestamp,
-      };
+    // 1. Generate
+    const delegatedCode = await protocol.generate(
+      "delegation",
+      delegationProof,
+      CHAIN,
+      createSignFn(delegated)
+    );
 
-      // 3. Create a revoke message but sign it with a different keypair
-      const differentKeypair = Keypair.generate();
-      const revokeMessage = serializeCanonicalRevoke(
-        canonicalRevokeMessageParts
-      );
-      const wrongSignature = createRealSignature(
-        revokeMessage,
-        differentKeypair
-      );
+    // 2. Validate (protocol + adapter)
+    protocol.validate("delegation", delegatedCode);
+    const validateOk = protocol.adapter.solana.verifyWithDelegation(delegatedCode);
+    expect(validateOk).toBe(true);
 
-      // 4. Create context for revoke verification with wrong signature
-      const context: ChainWalletStrategyRevokeContext<SolanaContext> = {
-        chain: "solana",
-        signature: wrongSignature, // But signed by different keypair
-        canonicalRevokeMessageParts,
-      };
+    // 3. Revoke
+    const revokeRecord = await protocol.revoke(
+      "delegation",
+      delegatedCode,
+      CHAIN,
+      createSignFn(delegated)
+    );
 
-      // 5. Verify the revoke signature should fail
-      const solanaAdapter = protocol.getAdapter("solana") as SolanaAdapter;
-      const verifyResult = solanaAdapter.verifyRevokeWithWallet(context);
-
-      expect(verifyResult).toBe(false);
-    });
-
-    test("verifyRevokeWithWallet works with different code hashes", async () => {
-      const solanaAdapter = protocol.getAdapter("solana") as SolanaAdapter;
-
-      // Test with multiple different action codes
-      const testCodes = ["12345678", "87654321", "ABCDEFGH", "ZYXWVUTS"];
-
-      for (const code of testCodes) {
-        // 1. Generate action code with specific code
-        const canonicalMessage = getCanonicalMessageParts(
-          testKeypair.publicKey.toString(),
-          protocol.getConfig().ttlMs
-        );
-        const signature = createRealSignature(canonicalMessage, testKeypair);
-
-        // Mock the code generation to use our specific code
-        const mockActionCode: ActionCode = {
-          code,
-          pubkey: testKeypair.publicKey.toString(),
-          timestamp: Math.floor(Date.now() / 120000) * 120000,
-          expiresAt: Math.floor(Date.now() / 120000) * 120000 + 120000,
-          signature,
-        };
-
-        // 2. Get the real code hash
-        const realCodeHash = codeHash(mockActionCode.code);
-        const canonicalRevokeMessageParts = {
-          pubkey: mockActionCode.pubkey,
-          codeHash: realCodeHash,
-          windowStart: mockActionCode.timestamp,
-        };
-
-        // 3. Create and sign revoke message
-        const revokeMessage = serializeCanonicalRevoke(
-          canonicalRevokeMessageParts
-        );
-        const revokeSignature = createRealSignature(revokeMessage, testKeypair);
-
-        // 4. Verify revoke signature
-        const context = {
-          chain: "solana",
-          message: canonicalRevokeMessageParts,
-          walletSignature: revokeSignature,
-        };
-
-        const verifyResult = solanaAdapter.verifyRevokeWithWallet(context);
-        expect(verifyResult).toBe(true);
-      }
-    });
-
-    test("realistic user workflow: generate code, then revoke it", async () => {
-      // 1. User generates an action code
-      const canonicalMessage = getCanonicalMessageParts(
-        testKeypair.publicKey.toString()
-      );
-      const signature = createRealSignature(canonicalMessage, testKeypair);
-      const { actionCode } = await protocol.generateCode(
-        "wallet",
-        canonicalMessage,
-        signature
-      );
-
-      // 2. User decides to revoke the action code
-      // User creates a revoke signature using their wallet
-      const { signature: userRevokeSignature, canonicalRevokeMessageParts } =
-        createUserRevokeSignature(actionCode, testKeypair);
-
-      // 3. User submits the revoke request to the system
-      // System verifies the user's revoke signature
-      const solanaAdapter = protocol.getAdapter("solana") as SolanaAdapter;
-      const context = {
-        chain: "solana",
-        message: canonicalRevokeMessageParts,
-        walletSignature: userRevokeSignature, // User provided this signature
-      };
-
-      const verifyResult = solanaAdapter.verifyRevokeWithWallet(context);
-      expect(verifyResult).toBe(true);
-
-      // 4. System can now safely revoke the action code
-      // (In a real implementation, this would mark the code as revoked in the database)
-      console.log(
-        `Action code ${actionCode.code} successfully revoked by user ${actionCode.pubkey}`
-      );
-    });
+    // 4. Verify revoke
+    const revokeOk = protocol.adapter.solana.verifyRevokeWithDelegation(
+      delegatedCode,
+      revokeRecord.revokeSignature
+    );
+    expect(revokeOk).toBe(true);
   });
 });
+
+

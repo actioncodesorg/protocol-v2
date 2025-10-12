@@ -26,17 +26,17 @@ describe("WalletStrategy", () => {
     test("generates valid action code with correct structure", async () => {
       const pubkey = "testpubkey123";
       const canonicalMessage = createCanonicalMessage(pubkey);
-      const result = strategy.generateCode(canonicalMessage, "testsignature");
+      const actionCode = strategy.generateCode(canonicalMessage, "testsignature");
 
-      expect(result.actionCode).toMatchObject({
+      expect(actionCode).toMatchObject({
         code: expect.any(String),
         pubkey,
         timestamp: expect.any(Number),
         expiresAt: expect.any(Number),
       });
 
-      expect(result.canonicalMessage).toBeInstanceOf(Uint8Array);
-      expect(result.canonicalMessage.length).toBeGreaterThan(0);
+      expect(canonicalMessage).toBeInstanceOf(Uint8Array);
+      expect(canonicalMessage.length).toBeGreaterThan(0);
     });
 
     test("generates deterministic codes for same input", async () => {

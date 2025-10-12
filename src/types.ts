@@ -1,4 +1,9 @@
+import { SUPPORTED_CHAINS } from "./constants";
+
+export type Chain = (typeof SUPPORTED_CHAINS)[number];
+
 export interface ActionCode {
+  chain: Chain;
   code: string;
   pubkey: string;
   timestamp: number;
@@ -23,24 +28,22 @@ export interface CodeGenerationConfig {
   clockSkewMs?: number; // tolerated skew for validation
 }
 
-export interface WalletStrategyCodeGenerationResult {
-  actionCode: ActionCode;
-  canonicalMessage: Uint8Array;
-}
-
-export interface DelegationStrategyCodeGenerationResult {
-  actionCode: DelegatedActionCode;
-}
-
 export interface DelegationProof {
-  walletPubkey: string;     // User's public key
-  delegatedPubkey: string;  // Delegated keypair's public key
-  expiresAt: number;        // Unix timestamp
-  chain: string;            // Target blockchain chain
-  signature: string;        // User's signature over: walletPubkey + delegatedPubkey + expiresAt + chain
+  walletPubkey: string; // User's public key
+  delegatedPubkey: string; // Delegated keypair's public key
+  expiresAt: number; // Unix timestamp
+  chain: string; // Target blockchain chain
+  signature: string; // User's signature over: walletPubkey + delegatedPubkey + expiresAt + chain
 }
 
 export interface DelegatedActionCode extends ActionCode {
   delegationProof: DelegationProof; // The delegation proof
 }
 
+export interface ActionCodeRevoke extends ActionCode {
+  revokeSignature: string;
+}
+
+export interface DelegatedActionCodeRevoke extends DelegatedActionCode {
+  revokeSignature: string;
+}

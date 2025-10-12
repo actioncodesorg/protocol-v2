@@ -136,39 +136,44 @@ describe("DelegationStrategy", () => {
 
   describe("generateDelegatedCode", () => {
     it("should generate a valid delegated action code", () => {
+      const canonicalMessage = getCanonicalMessageParts(delegationProof.delegatedPubkey);
       const result = strategy.generateDelegatedCode(
         delegationProof,
+        canonicalMessage,
+        "solana",
         realDelegatedSignature
       );
 
-      expect(result.actionCode).toBeDefined();
-      expect(result.actionCode.code).toBeDefined();
-      expect(result.actionCode.pubkey).toBe(
-        "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
-      );
-      expect(result.actionCode.delegationProof).toBeDefined();
-      expect(result.actionCode.delegationProof.walletPubkey).toBe(
+      expect(result.code).toBeDefined();
+      expect(result.pubkey).toBe(delegationProof.walletPubkey); // Should be wallet owner
+      expect(result.delegationProof).toBeDefined();
+      expect(result.delegationProof.walletPubkey).toBe(
         mockWallet.publicKey
       );
-      expect(result.actionCode.delegationProof.delegatedPubkey).toBe(
+      expect(result.delegationProof.delegatedPubkey).toBe(
         delegatedKeypair.publicKey.toString()
       );
-      expect(result.actionCode.delegationProof.signature).toBe(
+      expect(result.delegationProof.signature).toBe(
         delegationProof.signature
       );
     });
 
     it("should generate deterministic codes for the same delegation proof", () => {
+      const canonicalMessage = getCanonicalMessageParts(delegationProof.delegatedPubkey);
       const result1 = strategy.generateDelegatedCode(
         delegationProof,
+        canonicalMessage,
+        "solana",
         realDelegatedSignature
       );
       const result2 = strategy.generateDelegatedCode(
         delegationProof,
+        canonicalMessage,
+        "solana",
         realDelegatedSignature
       );
 
-      expect(result1.actionCode.code).toBe(result2.actionCode.code);
+      expect(result1.code).toBe(result2.code);
     });
 
     it("should generate different codes for different delegation proofs", () => {
