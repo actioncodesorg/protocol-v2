@@ -225,20 +225,12 @@ export class SolanaAdapter extends BaseChainAdapter {
     // Check if delegation has expired
     if (proof.expiresAt < Date.now()) return false;
 
+    // Perform all operations in a single try-catch to ensure consistent timing
     try {
       const delegationMessage = serializeDelegationProof(proof);
       const walletPub = this.normalizePubkey(proof.walletPubkey);
       const walletSigBytes = bs58.decode(proof.signature);
       const walletPubBytes = walletPub.toBytes();
-      if (walletSigBytes.length !== 64 || walletPubBytes.length !== 32) {
-        return false;
-      }
-      const walletOk = nacl.sign.detached.verify(
-        delegationMessage,
-        walletSigBytes,
-        walletPubBytes
-      );
-      if (!walletOk) return false;
 
       const revokeMessage = serializeCanonicalRevoke({
         pubkey: proof.delegatedPubkey, // Revoke signature is from delegated keypair
@@ -248,15 +240,31 @@ export class SolanaAdapter extends BaseChainAdapter {
       const delegatedPub = this.normalizePubkey(proof.delegatedPubkey);
       const delegatedSigBytes = bs58.decode(revokeSignature);
       const delegatedPubBytes = delegatedPub.toBytes();
+
+      // Validate lengths first to prevent timing attacks
+      if (walletSigBytes.length !== 64 || walletPubBytes.length !== 32) {
+        return false;
+      }
       if (delegatedSigBytes.length !== 64 || delegatedPubBytes.length !== 32) {
         return false;
       }
-      
-      return nacl.sign.detached.verify(
+
+      // Perform both signature verifications regardless of first result
+      // This prevents timing attacks that could leak information about which signature failed
+      const delegationProofOk = nacl.sign.detached.verify(
+        delegationMessage,
+        walletSigBytes,
+        walletPubBytes
+      );
+
+      const revokeMessageOk = nacl.sign.detached.verify(
         revokeMessage,
         delegatedSigBytes,
         delegatedPubBytes
       );
+
+      // Return result only after both operations complete
+      return delegationProofOk && revokeMessageOk;
     } catch {
       // All errors result in false with consistent timing
       return false;

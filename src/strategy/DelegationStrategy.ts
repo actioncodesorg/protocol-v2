@@ -79,26 +79,19 @@ export class DelegationStrategy {
       );
     }
 
-
-    if (actionCode.delegationProof.expiresAt !== actionCode.delegationProof.expiresAt) {
+    // Verify that the generated code doesn't expire after the delegation proof
+    // This prevents codes from outliving their authorization
+    if (actionCode.expiresAt > actionCode.delegationProof.expiresAt) {
       throw ProtocolError.invalidInput(
         "expiresAt",
-        actionCode.delegationProof.expiresAt,
-        "Action code delegation expiration does not match delegation proof"
+        actionCode.expiresAt,
+        "Action code cannot expire after delegation proof expiration"
       );
     }
 
     // Verify delegated signature is present
     if (!actionCode.delegationProof.signature) {
       throw ProtocolError.missingRequiredField("delegationProof.signature");
-    }
-
-    if (actionCode.delegationProof.signature !== actionCode.delegationProof.signature) {
-      throw ProtocolError.invalidInput(
-        "signature",
-        actionCode.delegationProof.signature,
-        "Invalid signature: Action code delegation signature does not match delegation proof"
-      );
     }
 
     // Finally, verify the delegated signature against the canonical message

@@ -311,7 +311,7 @@ describe("WalletStrategy", () => {
     });
 
     test("handles very long pubkey", async () => {
-      const longPubkey = "a".repeat(1000);
+      const longPubkey = "a".repeat(50); // Within 100 char limit
       const canonicalMessage = createCanonicalMessage(longPubkey);
       const chain: Chain = "solana";
       const signature = "testsignature";

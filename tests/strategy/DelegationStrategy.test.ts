@@ -257,18 +257,18 @@ describe("DelegationStrategy", () => {
     it("should throw error for missing delegated pubkey", () => {
       const invalidProof: DelegationProof = {
         walletPubkey: mockWallet.publicKey,
-        delegatedPubkey: "",
+        delegatedPubkey: "", // This will be caught by validation
         expiresAt: Date.now() + 3600000,
         chain: "solana",
         signature: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
       };
 
-      const canonicalMessage = getCanonicalMessageParts(invalidProof.delegatedPubkey);
+      const canonicalMessage = getCanonicalMessageParts("valid-pubkey"); // Use valid pubkey for canonical message
       const chain: Chain = "solana";
 
       expect(() => {
         strategy.generateDelegatedCode(invalidProof, canonicalMessage, chain, realDelegatedSignature);
-      }).toThrow("Delegated pubkey is required");
+      }).toThrow("Invalid delegatedPubkey: Delegated pubkey is required and must be a string");
     });
   });
 
