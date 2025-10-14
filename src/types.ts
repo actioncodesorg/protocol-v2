@@ -1,6 +1,6 @@
 import { SUPPORTED_CHAINS } from "./constants";
 
-export type Chain = (typeof SUPPORTED_CHAINS)[number];
+export type Chain = keyof typeof SUPPORTED_CHAINS;
 
 export interface ActionCode {
   chain: Chain;

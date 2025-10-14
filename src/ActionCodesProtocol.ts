@@ -82,7 +82,7 @@ export class ActionCodesProtocol {
     chain: Chain,
     signFn: SignFn
   ): Promise<ActionCode | DelegatedActionCode> {
-    if (!chain || !SUPPORTED_CHAINS.includes(chain)) {
+    if (!chain || !SUPPORTED_CHAINS[chain]) {
       throw ProtocolError.invalidAdapter(chain);
     }
 
@@ -139,7 +139,7 @@ export class ActionCodesProtocol {
     chain: Chain,
     signFn: SignFn
   ): Promise<ActionCodeRevoke | DelegatedActionCodeRevoke> {
-    if (!chain || !SUPPORTED_CHAINS.includes(chain)) {
+    if (!chain || !SUPPORTED_CHAINS[chain]) {
       throw ProtocolError.invalidAdapter(chain);
     }
 

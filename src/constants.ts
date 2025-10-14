@@ -10,6 +10,8 @@ export const CODE_DEFAULT_LENGTH = 8;
 // Digits-only codes (0-9)
 export const CODE_CHARSET_DIGITS = "0123456789";
 
-export const SUPPORTED_CHAINS = ["solana"] as const;
+export const SUPPORTED_CHAINS = {
+    solana: "solana",
+} as const;
 
 
