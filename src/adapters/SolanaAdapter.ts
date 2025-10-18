@@ -117,9 +117,7 @@ export class SolanaAdapter extends BaseChainAdapter {
         windowStart: delegatedActionCode.timestamp,
       });
       const delegatedPub = this.normalizePubkey(proof.delegatedPubkey);
-      const delegatedSigBytes = bs58.decode(
-        delegatedActionCode.signature
-      );
+      const delegatedSigBytes = bs58.decode(delegatedActionCode.signature);
       const delegatedPubBytes = delegatedPub.toBytes();
 
       // Validate lengths first to prevent timing attacks
@@ -143,7 +141,6 @@ export class SolanaAdapter extends BaseChainAdapter {
         delegatedSigBytes,
         delegatedPubBytes
       );
-
 
       // Return result only after both operations complete
       return delegationProofOk && canonicalMessageOk;
@@ -480,6 +477,36 @@ export class SolanaAdapter extends BaseChainAdapter {
     throw ProtocolError.invalidTransactionFormat(
       "Unsupported transaction format"
     );
+  }
+
+  verifyMessageSignedByIntentOwner(
+    message: string,
+    signature: string,
+    pubkey: string
+  ): void {
+    try {
+      const messageBytes = new TextEncoder().encode(message);
+      const signatureBytes = bs58.decode(signature);
+      const pubkeyObj = this.normalizePubkey(pubkey);
+      const pubBytes = pubkeyObj.toBytes();
+
+      const isValid = nacl.sign.detached.verify(
+        messageBytes,
+        signatureBytes,
+        pubBytes
+      );
+
+      if (!isValid) {
+        throw ProtocolError.invalidSignature(
+          "Signature verification failed"
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Signature verification failed")) {
+        throw error;
+      }
+      throw ProtocolError.invalidSignature("Invalid signature format");
+    }
   }
 
   /**

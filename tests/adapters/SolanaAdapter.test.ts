@@ -1093,6 +1093,128 @@ describe("SolanaAdapter", () => {
     });
   });
 
+  describe("verifyMessageSignedByIntentOwner", () => {
+    test("should verify a message signed by the action code owner", () => {
+      const ownerKeypair = Keypair.generate();
+      const message = "Authorise pumpfun 1121312313";
+      
+      // Encode the message as UTF-8 bytes
+      const messageBytes = new TextEncoder().encode(message);
+      
+      // Sign the message with the owner's keypair
+      const signature = nacl.sign.detached(messageBytes, ownerKeypair.secretKey);
+      
+      // Encode the signature as base58
+      const signatureB58 = bs58.encode(signature);
+      
+      // Verify should not throw
+      expect(() => {
+        adapter.verifyMessageSignedByIntentOwner(
+          message,
+          signatureB58,
+          ownerKeypair.publicKey.toString()
+        );
+      }).not.toThrow();
+    });
+
+    test("should throw for invalid signature", () => {
+      const ownerKeypair = Keypair.generate();
+      const wrongKeypair = Keypair.generate();
+      const message = "Authorise pumpfun 1121312313";
+      
+      // Encode the message as UTF-8 bytes
+      const messageBytes = new TextEncoder().encode(message);
+      
+      // Sign with wrong keypair
+      const signature = nacl.sign.detached(messageBytes, wrongKeypair.secretKey);
+      const signatureB58 = bs58.encode(signature);
+      
+      // Should throw because signature doesn't match pubkey
+      expect(() => {
+        adapter.verifyMessageSignedByIntentOwner(
+          message,
+          signatureB58,
+          ownerKeypair.publicKey.toString()
+        );
+      }).toThrow();
+    });
+
+    test("should throw for malformed signature", () => {
+      const ownerKeypair = Keypair.generate();
+      const message = "Authorise pumpfun 1121312313";
+      
+      // Should throw for invalid base58
+      expect(() => {
+        adapter.verifyMessageSignedByIntentOwner(
+          message,
+          "invalid-signature",
+          ownerKeypair.publicKey.toString()
+        );
+      }).toThrow();
+    });
+
+    test("should throw for invalid pubkey format", () => {
+      const message = "Authorise pumpfun 1121312313";
+      const messageBytes = new TextEncoder().encode(message);
+      const keypair = Keypair.generate();
+      const signature = nacl.sign.detached(messageBytes, keypair.secretKey);
+      const signatureB58 = bs58.encode(signature);
+      
+      // Should throw for invalid pubkey
+      expect(() => {
+        adapter.verifyMessageSignedByIntentOwner(
+          message,
+          signatureB58,
+          "invalid-pubkey"
+        );
+      }).toThrow();
+    });
+
+    test("should verify different message formats", () => {
+      const ownerKeypair = Keypair.generate();
+      const messages = [
+        "Authorise pumpfun 1121312313",
+        "Transfer 100 SOL",
+        "Approve transaction #12345",
+        "Sign in to dApp",
+      ];
+      
+      for (const message of messages) {
+        const messageBytes = new TextEncoder().encode(message);
+        const signature = nacl.sign.detached(messageBytes, ownerKeypair.secretKey);
+        const signatureB58 = bs58.encode(signature);
+        
+        expect(() => {
+          adapter.verifyMessageSignedByIntentOwner(
+            message,
+            signatureB58,
+            ownerKeypair.publicKey.toString()
+          );
+        }).not.toThrow();
+      }
+    });
+
+    test("should throw when message doesn't match signature", () => {
+      const ownerKeypair = Keypair.generate();
+      const originalMessage = "Authorise pumpfun 1121312313";
+      const differentMessage = "Authorise pumpfun 9999999999";
+      
+      // Sign the original message
+      const messageBytes = new TextEncoder().encode(originalMessage);
+      const signature = nacl.sign.detached(messageBytes, ownerKeypair.secretKey);
+      const signatureB58 = bs58.encode(signature);
+      
+      // Try to verify with a different message
+      expect(() => {
+        adapter.verifyMessageSignedByIntentOwner(
+          differentMessage,
+          signatureB58,
+          ownerKeypair.publicKey.toString()
+        );
+      }).toThrow();
+    });
+  });
+
   describe("delegation verification methods", () => {
     let walletKeypair: Keypair;
     let delegatedKeypair: Keypair;
