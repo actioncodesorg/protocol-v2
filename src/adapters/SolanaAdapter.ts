@@ -417,18 +417,31 @@ export class SolanaAdapter extends BaseChainAdapter {
     }
 
     const intended = meta.int;
+    const issuer = meta.iss;
     if (!intended) {
       throw ProtocolError.invalidMetaFormat(
         "Missing 'int' (intendedFor) field"
       );
     }
 
-    let pubkey: PublicKey;
+    let intendedPubkey: PublicKey;
+    let issuerPubkey: PublicKey;
     try {
-      pubkey = new PublicKey(intended);
+      intendedPubkey = new PublicKey(intended);
     } catch {
       throw ProtocolError.invalidPubkeyFormat(
         intended,
+        "Invalid public key format"
+      );
+    }
+
+    try {
+      if (issuer) {
+        issuerPubkey = new PublicKey(issuer);
+      }
+    } catch {
+      throw ProtocolError.invalidPubkeyFormat(
+        issuer || "",
         "Invalid public key format"
       );
     }
@@ -438,15 +451,31 @@ export class SolanaAdapter extends BaseChainAdapter {
 
     // For legacy Transaction
     if (tx instanceof Transaction) {
-      const isSigned = tx.signatures.some((sig) => {
-        if (!sig.signature) return false;
+      let isSignedByIntended = false;
+      let isSignedByIssuer = false;
+
+      tx.signatures.forEach((sig) => {
+        if (!sig.signature) return;
         actualSigners.push(sig.publicKey.toString());
-        return sig.publicKey.equals(pubkey);
+
+        if (sig.publicKey.equals(intendedPubkey)) {
+          isSignedByIntended = true;
+        }
+        if (issuer && sig.publicKey.equals(issuerPubkey!)) {
+          isSignedByIssuer = true;
+        }
       });
 
-      if (!isSigned) {
+      if (!isSignedByIntended) {
         throw ProtocolError.transactionNotSignedByIntendedOwner(
           intended,
+          actualSigners
+        );
+      }
+
+      if (issuer && !isSignedByIssuer) {
+        throw ProtocolError.transactionNotSignedByIssuer(
+          issuer,
           actualSigners
         );
       }
@@ -457,20 +486,34 @@ export class SolanaAdapter extends BaseChainAdapter {
     if (tx instanceof VersionedTransaction) {
       const msg = tx.message;
       if (msg instanceof MessageV0) {
+        let isSignedByIntended = false;
+        let isSignedByIssuer = false;
         const signerCount = msg.header.numRequiredSignatures;
         for (let i = 0; i < signerCount; i++) {
           const key = msg.staticAccountKeys[i];
           if (key) {
             actualSigners.push(key.toString());
-            if (key.equals(pubkey)) {
-              return; // Found the intended signer
+            if (key.equals(intendedPubkey)) {
+              isSignedByIntended = true;
+            }
+            if (issuer && key.equals(issuerPubkey!)) {
+              isSignedByIssuer = true;
             }
           }
         }
-        throw ProtocolError.transactionNotSignedByIntendedOwner(
-          intended,
-          actualSigners
-        );
+        if (!isSignedByIntended) {
+          throw ProtocolError.transactionNotSignedByIntendedOwner(
+            intended,
+            actualSigners
+          );
+        }
+        if (issuer && !isSignedByIssuer) {
+          throw ProtocolError.transactionNotSignedByIssuer(
+            issuer,
+            actualSigners
+          );
+        }
+        return;
       }
     }
 
@@ -497,12 +540,13 @@ export class SolanaAdapter extends BaseChainAdapter {
       );
 
       if (!isValid) {
-        throw ProtocolError.invalidSignature(
-          "Signature verification failed"
-        );
+        throw ProtocolError.invalidSignature("Signature verification failed");
       }
     } catch (error) {
-      if (error instanceof Error && error.message.includes("Signature verification failed")) {
+      if (
+        error instanceof Error &&
+        error.message.includes("Signature verification failed")
+      ) {
         throw error;
       }
       throw ProtocolError.invalidSignature("Invalid signature format");

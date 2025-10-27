@@ -13,6 +13,7 @@ export enum ProtocolErrorCode {
 
   // Transaction errors
   TRANSACTION_NOT_SIGNED_BY_INTENDED_OWNER = "TRANSACTION_NOT_SIGNED_BY_INTENDED_OWNER",
+  TRANSACTION_NOT_SIGNED_BY_ISSUER = "TRANSACTION_NOT_SIGNED_BY_ISSUER",
   INVALID_TRANSACTION_FORMAT = "INVALID_TRANSACTION_FORMAT",
   INVALID_PUBKEY_FORMAT = "INVALID_PUBKEY_FORMAT",
 
@@ -87,6 +88,10 @@ export class ProtocolError extends Error {
   // Transaction errors
   static transactionNotSignedByIntendedOwner(intended: string, actualSigners: string[]): TransactionNotSignedByIntendedOwnerError {
     return new TransactionNotSignedByIntendedOwnerError(intended, actualSigners);
+  }
+
+  static transactionNotSignedByIssuer(issuer: string, actualSigners: string[]): TransactionNotSignedByIssuerError {
+    return new TransactionNotSignedByIssuerError(issuer, actualSigners);
   }
 
   static invalidTransactionFormat(reason: string): ProtocolError {
@@ -189,6 +194,19 @@ export class TransactionNotSignedByIntendedOwnerError extends ProtocolError {
       { intended, actualSigners }
     );
     this.name = "TransactionNotSignedByIntendedOwnerError";
+  }
+}
+
+export class TransactionNotSignedByIssuerError extends ProtocolError {
+  constructor(issuer: string, actualSigners: string[]) {
+    super(
+      ProtocolErrorCode.TRANSACTION_NOT_SIGNED_BY_ISSUER,
+      `Transaction not signed by issuer '${issuer}'. Actual signers: [${actualSigners.join(
+        ", "
+      )}]`,
+      { issuer, actualSigners }
+    );
+    this.name = "TransactionNotSignedByIssuerError";
   }
 }
 

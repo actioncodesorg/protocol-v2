@@ -563,6 +563,137 @@ describe("SolanaAdapter", () => {
       }).toThrow();
     });
 
+    test("verifyTransactionSignedByIntentOwner succeeds when transaction is signed by both int and iss", () => {
+      const intendedKeypair = Keypair.generate();
+      const issuerKeypair = Keypair.generate();
+      const code = "12345678";
+      const codeHashValue = codeHash(code);
+
+      const instruction = SolanaAdapter.createProtocolMetaIx({
+        ver: 2,
+        id: codeHashValue,
+        int: intendedKeypair.publicKey.toString(),
+        iss: issuerKeypair.publicKey.toString(),
+      });
+
+      // Add issuer as a signer in the instruction
+      instruction.keys.push({
+        pubkey: issuerKeypair.publicKey,
+        isSigner: true,
+        isWritable: false,
+      });
+
+      const tx = new Transaction().add(instruction);
+      tx.recentBlockhash = "11111111111111111111111111111111";
+      tx.feePayer = intendedKeypair.publicKey;
+      
+      // Sign with both intended and issuer
+      tx.sign(intendedKeypair, issuerKeypair);
+
+      const base64String = Buffer.from(tx.serialize()).toString("base64");
+      expect(() => {
+        adapter.verifyTransactionSignedByIntentOwner(base64String);
+      }).not.toThrow();
+    });
+
+    test("verifyTransactionSignedByIntentOwner throws when transaction has iss but only signed by int", () => {
+      const intendedKeypair = Keypair.generate();
+      const issuerKeypair = Keypair.generate();
+      const code = "12345678";
+      const codeHashValue = codeHash(code);
+
+      const instruction = SolanaAdapter.createProtocolMetaIx({
+        ver: 2,
+        id: codeHashValue,
+        int: intendedKeypair.publicKey.toString(),
+        iss: issuerKeypair.publicKey.toString(),
+      });
+
+      const tx = new Transaction().add(instruction);
+      tx.recentBlockhash = "11111111111111111111111111111111";
+      tx.feePayer = intendedKeypair.publicKey;
+      
+      // Sign only with intended, not issuer
+      tx.sign(intendedKeypair);
+
+      const base64String = Buffer.from(tx.serialize()).toString("base64");
+      expect(() => {
+        adapter.verifyTransactionSignedByIntentOwner(base64String);
+      }).toThrow(/issuer/);
+    });
+
+    test("verifyTransactionSignedByIntentOwner throws when transaction has iss but only signed by iss", () => {
+      const intendedKeypair = Keypair.generate();
+      const issuerKeypair = Keypair.generate();
+      const code = "12345678";
+      const codeHashValue = codeHash(code);
+
+      const instruction = SolanaAdapter.createProtocolMetaIx({
+        ver: 2,
+        id: codeHashValue,
+        int: intendedKeypair.publicKey.toString(),
+        iss: issuerKeypair.publicKey.toString(),
+      });
+
+      const tx = new Transaction().add(instruction);
+      tx.recentBlockhash = "11111111111111111111111111111111";
+      tx.feePayer = issuerKeypair.publicKey;
+      
+      // Sign only with issuer, not intended
+      tx.sign(issuerKeypair);
+
+      const base64String = Buffer.from(tx.serialize()).toString("base64");
+      expect(() => {
+        adapter.verifyTransactionSignedByIntentOwner(base64String);
+      }).toThrow(/intended owner/);
+    });
+
+    test("verifyTransactionSignedByIntentOwner succeeds when iss field is absent (only checks int)", () => {
+      const keypair = Keypair.generate();
+      const code = "12345678";
+      const codeHashValue = codeHash(code);
+
+      const instruction = SolanaAdapter.createProtocolMetaIx({
+        ver: 2,
+        id: codeHashValue,
+        int: keypair.publicKey.toString(),
+        // No iss field
+      });
+
+      const tx = new Transaction().add(instruction);
+      tx.recentBlockhash = "11111111111111111111111111111111";
+      tx.feePayer = keypair.publicKey;
+      tx.sign(keypair);
+
+      const base64String = Buffer.from(tx.serialize()).toString("base64");
+      expect(() => {
+        adapter.verifyTransactionSignedByIntentOwner(base64String);
+      }).not.toThrow();
+    });
+
+    test("verifyTransactionSignedByIntentOwner succeeds when int and iss are same signer", () => {
+      const keypair = Keypair.generate();
+      const code = "12345678";
+      const codeHashValue = codeHash(code);
+
+      const instruction = SolanaAdapter.createProtocolMetaIx({
+        ver: 2,
+        id: codeHashValue,
+        int: keypair.publicKey.toString(),
+        iss: keypair.publicKey.toString(), // Same as int
+      });
+
+      const tx = new Transaction().add(instruction);
+      tx.recentBlockhash = "11111111111111111111111111111111";
+      tx.feePayer = keypair.publicKey;
+      tx.sign(keypair);
+
+      const base64String = Buffer.from(tx.serialize()).toString("base64");
+      expect(() => {
+        adapter.verifyTransactionSignedByIntentOwner(base64String);
+      }).not.toThrow();
+    });
+
     test("attachProtocolMeta adds meta to legacy transaction", () => {
       const tx = new Transaction();
       tx.recentBlockhash = "11111111111111111111111111111111";

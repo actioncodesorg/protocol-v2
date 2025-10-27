@@ -1,7 +1,7 @@
 // Protocol-wide constants
 
 export const PROTOCOL_NORMALIZATION = "NFC";
-export const PROTOCOL_META_MAX_BYTES = 256; // UTF-8 bytes
+export const PROTOCOL_META_MAX_BYTES = 512; // UTF-8 bytes 
 
 export const CODE_MIN_LENGTH = 6;
 export const CODE_MAX_LENGTH = 24;
