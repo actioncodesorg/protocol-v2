@@ -1,8 +1,8 @@
-[**@actioncodes/protocol-v2**](../README.md)
+[**@actioncodes/protocol**](../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../modules.md) / constants
+[@actioncodes/protocol](../modules.md) / constants
 
 # constants
 

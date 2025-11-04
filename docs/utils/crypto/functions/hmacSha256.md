@@ -1,8 +1,8 @@
-[**@actioncodes/protocol-v2**](../../../README.md)
+[**@actioncodes/protocol**](../../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../../modules.md) / [utils/crypto](../README.md) / hmacSha256
+[@actioncodes/protocol](../../../modules.md) / [utils/crypto](../README.md) / hmacSha256
 
 # Function: hmacSha256()
 

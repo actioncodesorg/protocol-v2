@@ -1,14 +1,14 @@
-[**@actioncodes/protocol-v2**](../../../README.md)
+[**@actioncodes/protocol**](../../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../../modules.md) / [utils/protocolMeta](../README.md) / buildProtocolMeta
+[@actioncodes/protocol](../../../modules.md) / [utils/protocolMeta](../README.md) / buildProtocolMeta
 
 # Function: buildProtocolMeta()
 
 > **buildProtocolMeta**(`fields`): `string`
 
-Defined in: src/utils/protocolMeta.ts:13
+Defined in: src/utils/protocolMeta.ts:14
 
 ## Parameters
 

@@ -1,8 +1,8 @@
-[**@actioncodes/protocol-v2**](../../README.md)
+[**@actioncodes/protocol**](../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../modules.md) / adapters/BaseChainAdapter
+[@actioncodes/protocol](../../modules.md) / adapters/BaseChainAdapter
 
 # adapters/BaseChainAdapter
 
@@ -12,9 +12,8 @@
 
 ## Interfaces
 
-- [BaseContext](interfaces/BaseContext.md)
 - [ChainAdapter](interfaces/ChainAdapter.md)
 
 ## Type Aliases
 
-- [ChainContext](type-aliases/ChainContext.md)
+- [SignFn](type-aliases/SignFn.md)

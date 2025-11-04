@@ -1,18 +1,26 @@
-[**@actioncodes/protocol-v2**](../../../README.md)
+[**@actioncodes/protocol**](../../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../../modules.md) / [strategy/WalletStrategy](../README.md) / WalletStrategy
+[@actioncodes/protocol](../../../modules.md) / [strategy/WalletStrategy](../README.md) / WalletStrategy
 
 # Class: WalletStrategy
 
-Defined in: src/strategy/WalletStrategy.ts:11
+Defined in: src/strategy/WalletStrategy.ts:8
 
 ## Constructors
 
 ### Constructor
 
-> **new WalletStrategy**(): `WalletStrategy`
+> **new WalletStrategy**(`config`): `WalletStrategy`
+
+Defined in: src/strategy/WalletStrategy.ts:9
+
+#### Parameters
+
+##### config
+
+[`CodeGenerationConfig`](../../../types/interfaces/CodeGenerationConfig.md)
 
 #### Returns
 
@@ -22,45 +30,41 @@ Defined in: src/strategy/WalletStrategy.ts:11
 
 ### generateCode()
 
-> `static` **generateCode**(`pubkey`, `config`, `providedSecret?`): [`CodeGenerationResult`](../../../types/interfaces/CodeGenerationResult.md)
+> **generateCode**(`canonicalMessage`, `chain`, `signature`): [`ActionCode`](../../../types/interfaces/ActionCode.md)
 
-Defined in: src/strategy/WalletStrategy.ts:12
+Defined in: src/strategy/WalletStrategy.ts:11
 
 #### Parameters
 
-##### pubkey
+##### canonicalMessage
 
-`string`
+`Uint8Array`
 
-##### config
+##### chain
 
-[`CodeGenerationConfig`](../../../types/interfaces/CodeGenerationConfig.md)
+`"solana"`
 
-##### providedSecret?
+##### signature
 
 `string`
 
 #### Returns
 
-[`CodeGenerationResult`](../../../types/interfaces/CodeGenerationResult.md)
+[`ActionCode`](../../../types/interfaces/ActionCode.md)
 
 ***
 
 ### validateCode()
 
-> `static` **validateCode**(`actionCode`, `config`): `void`
+> **validateCode**(`actionCode`): `void`
 
-Defined in: src/strategy/WalletStrategy.ts:48
+Defined in: src/strategy/WalletStrategy.ts:53
 
 #### Parameters
 
 ##### actionCode
 
 [`ActionCode`](../../../types/interfaces/ActionCode.md)
-
-##### config
-
-[`CodeGenerationConfig`](../../../types/interfaces/CodeGenerationConfig.md)
 
 #### Returns
 

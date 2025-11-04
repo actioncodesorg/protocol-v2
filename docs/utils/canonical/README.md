@@ -1,8 +1,8 @@
-[**@actioncodes/protocol-v2**](../../README.md)
+[**@actioncodes/protocol**](../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../modules.md) / utils/canonical
+[@actioncodes/protocol](../../modules.md) / utils/canonical
 
 # utils/canonical
 
@@ -10,7 +10,11 @@
 
 - [CANONICAL\_MESSAGE\_PREFIX](variables/CANONICAL_MESSAGE_PREFIX.md)
 - [CANONICAL\_MESSAGE\_VERSION](variables/CANONICAL_MESSAGE_VERSION.md)
+- [CANONICAL\_REVOKE\_MESSAGE\_PREFIX](variables/CANONICAL_REVOKE_MESSAGE_PREFIX.md)
 
 ## Functions
 
+- [getCanonicalMessageParts](functions/getCanonicalMessageParts.md)
 - [serializeCanonical](functions/serializeCanonical.md)
+- [serializeCanonicalRevoke](functions/serializeCanonicalRevoke.md)
+- [serializeDelegationProof](functions/serializeDelegationProof.md)

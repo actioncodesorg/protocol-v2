@@ -1,12 +1,12 @@
-[**@actioncodes/protocol-v2**](../../README.md)
+[**@actioncodes/protocol**](../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../modules.md) / [errors](../README.md) / MetaMismatchError
+[@actioncodes/protocol](../../modules.md) / [errors](../README.md) / MetaMismatchError
 
 # Class: MetaMismatchError
 
-Defined in: src/errors.ts:154
+Defined in: src/errors.ts:176
 
 ## Extends
 
@@ -18,7 +18,7 @@ Defined in: src/errors.ts:154
 
 > **new MetaMismatchError**(`expected`, `actual`, `field`): `MetaMismatchError`
 
-Defined in: src/errors.ts:155
+Defined in: src/errors.ts:177
 
 #### Parameters
 
@@ -62,7 +62,7 @@ The cause of the error.
 
 > `readonly` **code**: [`ProtocolErrorCode`](../enumerations/ProtocolErrorCode.md)
 
-Defined in: src/errors.ts:29
+Defined in: src/errors.ts:34
 
 #### Inherited from
 
@@ -74,7 +74,7 @@ Defined in: src/errors.ts:29
 
 > `readonly` `optional` **details**: `Record`\<`string`, `unknown`\>
 
-Defined in: src/errors.ts:31
+Defined in: src/errors.ts:36
 
 #### Inherited from
 
@@ -242,7 +242,7 @@ Create .stack property on a target object
 
 > `static` **create**(`code`, `message`, `details?`): [`ProtocolError`](ProtocolError.md)
 
-Defined in: src/errors.ts:127
+Defined in: src/errors.ts:149
 
 #### Parameters
 
@@ -272,7 +272,7 @@ Defined in: src/errors.ts:127
 
 > `static` **cryptoError**(`operation`, `reason`): [`ProtocolError`](ProtocolError.md)
 
-Defined in: src/errors.ts:110
+Defined in: src/errors.ts:127
 
 #### Parameters
 
@@ -298,7 +298,7 @@ Defined in: src/errors.ts:110
 
 > `static` **expiredCode**(`code`, `expiresAt`, `currentTime`): [`ExpiredCodeError`](ExpiredCodeError.md)
 
-Defined in: src/errors.ts:38
+Defined in: src/errors.ts:43
 
 #### Parameters
 
@@ -324,11 +324,49 @@ Defined in: src/errors.ts:38
 
 ***
 
+### invalidAdapter()
+
+> `static` **invalidAdapter**(`adapter`): [`InvalidAdapterError`](InvalidAdapterError.md)
+
+Defined in: src/errors.ts:144
+
+#### Parameters
+
+##### adapter
+
+`string`
+
+#### Returns
+
+[`InvalidAdapterError`](InvalidAdapterError.md)
+
+#### Inherited from
+
+[`ProtocolError`](ProtocolError.md).[`invalidAdapter`](ProtocolError.md#invalidadapter)
+
+***
+
+### invalidCode()
+
+> `static` **invalidCode**(): [`ProtocolError`](ProtocolError.md)
+
+Defined in: src/errors.ts:47
+
+#### Returns
+
+[`ProtocolError`](ProtocolError.md)
+
+#### Inherited from
+
+[`ProtocolError`](ProtocolError.md).[`invalidCode`](ProtocolError.md#invalidcode)
+
+***
+
 ### invalidCodeFormat()
 
 > `static` **invalidCodeFormat**(`code`, `reason`): [`InvalidCodeFormatError`](InvalidCodeFormatError.md)
 
-Defined in: src/errors.ts:42
+Defined in: src/errors.ts:55
 
 #### Parameters
 
@@ -354,7 +392,7 @@ Defined in: src/errors.ts:42
 
 > `static` **invalidDigest**(`reason`): [`ProtocolError`](ProtocolError.md)
 
-Defined in: src/errors.ts:118
+Defined in: src/errors.ts:135
 
 #### Parameters
 
@@ -376,7 +414,7 @@ Defined in: src/errors.ts:118
 
 > `static` **invalidInput**(`field`, `value`, `reason`): [`ProtocolError`](ProtocolError.md)
 
-Defined in: src/errors.ts:93
+Defined in: src/errors.ts:110
 
 #### Parameters
 
@@ -406,7 +444,7 @@ Defined in: src/errors.ts:93
 
 > `static` **invalidMetaFormat**(`reason`): [`ProtocolError`](ProtocolError.md)
 
-Defined in: src/errors.ts:55
+Defined in: src/errors.ts:68
 
 #### Parameters
 
@@ -428,7 +466,7 @@ Defined in: src/errors.ts:55
 
 > `static` **invalidPubkeyFormat**(`pubkey`, `reason`): [`InvalidPubkeyFormatError`](InvalidPubkeyFormatError.md)
 
-Defined in: src/errors.ts:88
+Defined in: src/errors.ts:105
 
 #### Parameters
 
@@ -454,7 +492,7 @@ Defined in: src/errors.ts:88
 
 > `static` **invalidSignature**(`reason`): [`InvalidSignatureError`](InvalidSignatureError.md)
 
-Defined in: src/errors.ts:46
+Defined in: src/errors.ts:59
 
 #### Parameters
 
@@ -476,7 +514,7 @@ Defined in: src/errors.ts:46
 
 > `static` **invalidTransactionFormat**(`reason`): [`ProtocolError`](ProtocolError.md)
 
-Defined in: src/errors.ts:80
+Defined in: src/errors.ts:97
 
 #### Parameters
 
@@ -550,7 +588,7 @@ True if the value is an instance of Error, false otherwise
 
 > `static` **metaMismatch**(`expected`, `actual`, `field`): `MetaMismatchError`
 
-Defined in: src/errors.ts:63
+Defined in: src/errors.ts:76
 
 #### Parameters
 
@@ -580,7 +618,7 @@ Defined in: src/errors.ts:63
 
 > `static` **metaTooLarge**(`maxBytes`, `actualBytes`): [`ProtocolError`](ProtocolError.md)
 
-Defined in: src/errors.ts:67
+Defined in: src/errors.ts:80
 
 #### Parameters
 
@@ -606,7 +644,7 @@ Defined in: src/errors.ts:67
 
 > `static` **missingMeta**(): [`MissingMetaError`](MissingMetaError.md)
 
-Defined in: src/errors.ts:51
+Defined in: src/errors.ts:64
 
 #### Returns
 
@@ -622,7 +660,7 @@ Defined in: src/errors.ts:51
 
 > `static` **missingRequiredField**(`field`): [`ProtocolError`](ProtocolError.md)
 
-Defined in: src/errors.ts:101
+Defined in: src/errors.ts:118
 
 #### Parameters
 
@@ -674,7 +712,7 @@ https://v8.dev/docs/stack-trace-api#customizing-stack-traces
 
 > `static` **transactionNotSignedByIntendedOwner**(`intended`, `actualSigners`): [`TransactionNotSignedByIntendedOwnerError`](TransactionNotSignedByIntendedOwnerError.md)
 
-Defined in: src/errors.ts:76
+Defined in: src/errors.ts:89
 
 #### Parameters
 
@@ -693,3 +731,29 @@ Defined in: src/errors.ts:76
 #### Inherited from
 
 [`ProtocolError`](ProtocolError.md).[`transactionNotSignedByIntendedOwner`](ProtocolError.md#transactionnotsignedbyintendedowner)
+
+***
+
+### transactionNotSignedByIssuer()
+
+> `static` **transactionNotSignedByIssuer**(`issuer`, `actualSigners`): [`TransactionNotSignedByIssuerError`](TransactionNotSignedByIssuerError.md)
+
+Defined in: src/errors.ts:93
+
+#### Parameters
+
+##### issuer
+
+`string`
+
+##### actualSigners
+
+`string`[]
+
+#### Returns
+
+[`TransactionNotSignedByIssuerError`](TransactionNotSignedByIssuerError.md)
+
+#### Inherited from
+
+[`ProtocolError`](ProtocolError.md).[`transactionNotSignedByIssuer`](ProtocolError.md#transactionnotsignedbyissuer)

@@ -5,9 +5,10 @@ Instead of heavy signature popups or complex flows, it uses short-lived one-time
 
 ### This enables:
 - Secure intent binding – the code is cryptographically tied to a wallet/public key.
-- Fast verification – relayers/servers can validate in microseconds.
-- Cross-chain support – adapters handle chain-specific quirks (currently we are supporting Solana)
+- Fast verification – relayers/servers can validate in microseconds (~3ms per verification).
+- Cross-chain support – adapters handle chain-specific quirks (currently supporting Solana)
 - Simple dev UX – just generate → sign → verify.
+- Issuer support – allows separation between code issuer and intent owner for advanced use cases.
 
 ### What's new in v2 (compared to [v1](https://github.com/otaprotocol/actioncodes))
 - Now we use Bun as core library. We are down to ~3ms per code signature verification on commodity hardware.
@@ -16,7 +17,7 @@ Instead of heavy signature popups or complex flows, it uses short-lived one-time
 - Chain Adapters simplified → They don't enforce business rules; they just provide utilities:
   - createProtocolMetaIx (for attaching metadata)
   - parseMeta / verifyTransactionMatchesCode (for checking integrity)
-  - verifyTransactionSignedByIntentOwner (optional stronger guarantee).
+  - verifyTransactionSignedByIntentOwner (checks both `int` and `iss` signatures when present).
 - Errors are typed → Clear ProtocolError.* categories instead of generic fails.
 
 ### Core Concepts
@@ -27,7 +28,9 @@ Instead of heavy signature popups or complex flows, it uses short-lived one-time
 
 2. Protocol Meta
    - The "payload" carried with transactions to tie them to action codes.
-   - Versioned, deterministic, size-limited. 
+   - Versioned, deterministic, size-limited (max 512 bytes).
+   - Fields: `ver` (version), `id` (code hash), `int` (intent owner), `iss` (issuer, optional), `p` (params, optional).
+   - When `iss` field is present, both issuer and intent owner must sign the transaction.
    - Perfect for attaching to transactions or off-chain messages for tracing.
 
 3. Canonical Message
@@ -45,137 +48,159 @@ The **Wallet Strategy** is the simplest approach where codes are generated direc
 
 #### How it works:
 ```typescript
-// 1. Get canonical message for signing
-const canonicalMessage = protocol.getCanonicalMessageParts("user-wallet-address");
+import { ActionCodesProtocol } from '@actioncodes/protocol';
+import { SolanaAdapter } from '@actioncodes/protocol';
 
-// 2. Sign the canonical message with user's wallet
-const signature = await userWallet.signMessage(canonicalMessage);
-
-// 3. Generate code with the signed canonical message (secret is optional)
-const result = await protocol.generateCode("wallet", canonicalMessage, signature);
-// Optional: provide secret for enhanced security
-// const result = await protocol.generateCode("wallet", canonicalMessage, signature, "optional-secret");
-
-// 4. Validate code
-const isValid = await protocol.validateCode("wallet", result.actionCode, {
-  chain: "solana",
-  pubkey: "user-wallet-address",
-  signature: signature
+// Initialize protocol
+const protocol = new ActionCodesProtocol({
+  codeLength: 8,      // Code length (6-24 digits)
+  ttlMs: 120000,      // Time to live (2 minutes)
+  clockSkewMs: 5000   // Clock skew tolerance (5 seconds)
 });
+
+// Register Solana adapter
+protocol.registerAdapter('solana', new SolanaAdapter());
+
+// 1. Generate code with wallet strategy
+const signFn = async (message: Uint8Array, chain: string) => {
+  // Sign the canonical message with user's wallet
+  const signature = await userWallet.signMessage(message);
+  return signature; // Returns base58-encoded signature
+};
+
+const actionCode = await protocol.generate(
+  "wallet",
+  userWallet.publicKey.toString(),
+  "solana",
+  signFn
+);
+
+// 2. Validate code
+protocol.validate("wallet", actionCode);
+// Throws ProtocolError if validation fails
 ```
 
 #### Key Features:
 - **Signature-based security** - Codes require a valid signature over the canonical message (prevents public key + timestamp attacks)
 - **Direct wallet binding** - Codes are cryptographically tied to the user's public key
-- **Optional secrets** - Users can provide a secret for enhanced security (uses HMAC), or omit it (uses SHA256)
+- **HMAC-based generation** - Uses signature as entropy source for secure code generation
 - **Immediate validation** - No delegation certificates needed
-- **Perfect for** - Direct user interactions, simple authentication flows
+- **Perfect for** - Direct user interactions, simple authentication flows, transaction authorization
 
 #### Security Model:
 - **Signature verification** - All codes require a valid signature over the canonical message
 - **Public key + timestamp attack prevention** - Signatures prevent attackers from generating codes with just public key + timestamp
-- Codes are bound to the specific public key
-- Optional secret provides additional entropy (HMAC vs SHA256)
+- **HMAC-based entropy** - Codes use HMAC-SHA256 with signature as key, ensuring cryptographic security
+- Codes are bound to the specific public key and timestamp
 - Time-based expiration prevents replay attacks
 - Canonical message signing ensures integrity
 
 ### 2. Delegation Strategy (Advanced)
 
-The **Delegation Strategy** allows users to pre-authorize actions through delegation certificates, enabling more complex workflows like relayer services.
+The **Delegation Strategy** allows users to pre-authorize actions through delegation proofs, enabling more complex workflows like relayer services.
 
 #### How it works:
 
-##### Step 1: Create Delegation Certificate
+##### Step 1: Create Delegation Proof
 ```typescript
-// User creates a delegation certificate template
-const template = await protocol.createDelegationCertificateTemplate(
-  userPublicKey,
-  3600000, // 1 hour expiration
-  "solana"
-);
+import { serializeDelegationProof } from '@actioncodes/protocol';
 
-// User signs the certificate
-const message = DelegationStrategy.serializeCertificate(template);
-const signature = await userWallet.signMessage(message);
-
-const certificate: DelegationCertificate = {
-  ...template,
-  signature: signature
+// User creates a delegation proof
+const delegationProof = {
+  walletPubkey: userWallet.publicKey.toString(),
+  delegatedPubkey: delegatedKeypair.publicKey.toString(),
+  chain: "solana",
+  expiresAt: Date.now() + 3600000, // 1 hour expiration
+  signature: "" // Will be set after signing
 };
+
+// User signs the delegation proof
+const delegationMessage = serializeDelegationProof(delegationProof);
+const delegationSignature = await userWallet.signMessage(delegationMessage);
+delegationProof.signature = delegationSignature;
 ```
 
 ##### Step 2: Generate Delegated Codes
 ```typescript
-// Generate codes using the delegation certificate
-const result = await protocol.generateCode("delegation", certificate);
-const actionCode = result.actionCode;
+// Sign function for delegated keypair
+const delegatedSignFn = async (message: Uint8Array, chain: string) => {
+  const signature = await delegatedKeypair.signMessage(message);
+  return signature;
+};
+
+// Generate code using delegation strategy
+const delegatedActionCode = await protocol.generate(
+  "delegation",
+  delegationProof,
+  "solana",
+  delegatedSignFn
+);
 ```
 
 ##### Step 3: Validate Delegated Codes
 ```typescript
-// Validate the delegated code with the certificate
-const isValid = await protocol.validateCode(actionCode, "delegation", certificate);
+// Validate the delegated code
+protocol.validate("delegation", delegatedActionCode);
+// Throws ProtocolError if validation fails
 ```
 
 #### Key Features:
 - **Pre-authorization** - Users can authorize actions for a limited time
 - **Relayer support** - Third parties can validate codes without generating them
-- **Certificate-based** - Codes are bound to specific delegation certificates
-- **Time-limited** - Certificates have expiration times
+- **Proof-based** - Codes are bound to specific delegation proofs
+- **Time-limited** - Delegation proofs have expiration times
 - **Perfect for** - Relayer services, automated systems, complex workflows
 
 #### Security Model:
-- **Code-Certificate Binding** - Codes are cryptographically bound to their specific certificate
-- **Signature Verification** - Certificate signatures are verified using chain adapters
-- **Delegation ID** - Each certificate has a unique ID derived from its content + signature
-- **Cross-Certificate Protection** - Codes from one certificate cannot be used with another
-- **Relayer Security** - Relayers can validate codes but cannot generate them without the user's signature
+- **Code-Proof Binding** - Codes are cryptographically bound to their specific delegation proof
+- **Signature Verification** - Delegation proof signatures are verified using chain adapters
+- **Dual Signature Requirement** - Both wallet signature (on proof) and delegated signature (on code) are required
+- **Cross-Proof Protection** - Codes from one delegation proof cannot be used with another
+- **Relayer Security** - Relayers can validate codes but cannot generate them without the delegated keypair's signature
 
 #### Important Security Guarantees:
 
-1. **Stolen Delegation IDs are Useless**
-   - Delegation IDs are public identifiers (like transaction hashes)
-   - They cannot be used to generate or validate codes
-   - They're safe to share publicly
+1. **Stolen Delegation Proofs are Limited**
+   - Delegation proofs contain public data (pubkeys, expiration, chain)
+   - They cannot be used to generate codes without the delegated keypair's private key
+   - The proof signature prevents tampering but doesn't enable code generation
 
 2. **Stolen Signatures Cannot Create Valid Codes**
    - Even if an attacker steals a signature, they cannot create valid codes
-   - Codes are bound to the ENTIRE certificate (not just the signature)
-   - Different certificate data = different code = validation failure
+   - Codes are bound to the ENTIRE delegation proof (not just the signature)
+   - Different proof data = different code = validation failure
 
 3. **Relayer Code Generation Prevention**
-   - Relayers cannot generate codes even with public certificate data
-   - Certificate hashes include the signature (private user asset)
-   - Only the original user can generate valid codes
+   - Relayers cannot generate codes even with public delegation proof data
+   - Codes require signatures from the delegated keypair (private asset)
+   - Only holders of the delegated keypair can generate valid codes
 
-4. **Code-Certificate Binding**
-   - Codes are cryptographically linked to their specific certificate
-   - Cross-certificate attacks are impossible
-   - Each certificate produces unique codes
+4. **Code-Proof Binding**
+   - Codes are cryptographically linked to their specific delegation proof
+   - Cross-proof attacks are impossible
+   - Each delegation proof produces unique codes
 
-#### Delegation Certificate Structure:
+#### Delegation Proof Structure:
 ```typescript
-interface DelegationCertificate {
-  version: "1.0";
-  delegator: string;        // User's public key
-  issuedAt: number;         // Timestamp when issued
-  expiresAt: number;        // Expiration timestamp
-  nonce: string;           // Unique nonce for this certificate
-  chain: string;           // Target blockchain
-  signature: string;       // User's signature of the certificate
+interface DelegationProof {
+  walletPubkey: string;      // Original wallet's public key
+  delegatedPubkey: string;    // Delegated keypair's public key
+  chain: string;             // Target blockchain
+  expiresAt: number;         // Expiration timestamp
+  signature: string;         // Wallet's signature of the delegation proof
 }
 ```
 
 #### Delegated Action Code Structure:
 ```typescript
 interface DelegatedActionCode {
-  code: string;            // The actual action code
-  pubkey: string;          // User's public key
-  timestamp: number;       // Generation timestamp
-  expiresAt: number;       // Code expiration
-  delegationId: string;    // Hash of the certificate (used internally as secret)
-  delegatedBy: string;     // Who delegated (same as pubkey)
-  // Note: secret field is inherited from ActionCode but not used in delegation
+  code: string;              // The actual action code
+  pubkey: string;            // Delegated pubkey (who signs the code)
+  timestamp: number;         // Generation timestamp
+  expiresAt: number;         // Code expiration
+  signature: string;         // Signature from delegated keypair
+  chain: string;            // Target blockchain
+  delegationProof: DelegationProof; // The delegation proof
 }
 ```
 
@@ -186,72 +211,106 @@ interface DelegatedActionCode {
 #### 1. Simple Authentication
 ```typescript
 // User logs into a dApp
-const canonicalMessage = protocol.getCanonicalMessageParts(userWallet.publicKey);
-const signature = await userWallet.signMessage(canonicalMessage);
-const result = await protocol.generateCode("wallet", canonicalMessage, signature);
+const signFn = async (message: Uint8Array, chain: string) => {
+  return await userWallet.signMessage(message);
+};
+
+const actionCode = await protocol.generate(
+  "wallet",
+  userWallet.publicKey.toString(),
+  "solana",
+  signFn
+);
 
 // dApp validates the code
-const isValid = await protocol.validateCode('wallet', result.actionCode, {
-  chain: "solana",
-  pubkey: userWallet.publicKey,
-  signature: signature
-});
+protocol.validate("wallet", actionCode);
 ```
 
 #### 2. Transaction Authorization
 ```typescript
+import { buildProtocolMeta, codeHash } from '@actioncodes/protocol';
+
 // User authorizes a specific transaction
-const canonicalMessage = protocol.getCanonicalMessageParts(userWallet.publicKey);
-const signature = await userWallet.signMessage(canonicalMessage);
-const result = await protocol.generateCode("wallet", canonicalMessage, signature);
-// Optional: add secret for enhanced security
-// const result = await protocol.generateCode("wallet", canonicalMessage, signature, `tx-${transactionHash}`);
+const signFn = async (message: Uint8Array, chain: string) => {
+  return await userWallet.signMessage(message);
+};
+
+const actionCode = await protocol.generate(
+  "wallet",
+  userWallet.publicKey.toString(),
+  "solana",
+  signFn
+);
 
 // Relayer validates before executing
-const isValid = await protocol.validateCode('wallet', result.actionCode, {
-  chain: "solana",
-  pubkey: userWallet.publicKey,
-  signature: signature
+protocol.validate("wallet", actionCode);
+
+// Attach protocol meta to transaction
+const adapter = protocol.getAdapter("solana") as SolanaAdapter;
+const meta = buildProtocolMeta({
+  ver: 2,
+  id: codeHash(actionCode.code),
+  int: actionCode.pubkey,
 });
+const txWithMeta = SolanaAdapter.attachProtocolMeta(transactionBase64, meta);
+
+// Verify transaction is signed by the intended owner
+adapter.verifyTransactionSignedByIntentOwner(txWithMeta);
 ```
 
 ### Delegation Strategy Use Cases
 
 #### 1. Relayer Services
 ```typescript
-// User pre-authorizes a relayer for 1 hour
-const certificate = await createDelegationCertificate(userWallet, 3600000);
+// User creates delegation proof for relayer
+const delegationProof = {
+  walletPubkey: userWallet.publicKey.toString(),
+  delegatedPubkey: relayerKeypair.publicKey.toString(),
+  chain: "solana",
+  expiresAt: Date.now() + 3600000, // 1 hour
+  signature: await signDelegationProof(delegationProof)
+};
 
 // Relayer can validate codes but not generate them
-const relayer = new RelayerService();
-relayer.registerCertificate(certificate);
-
 // User generates codes that relayer can validate
-const actionCode = await protocol.generateCode("delegation", certificate);
-const isValid = relayer.validateCode(actionCode, certificate);
+const delegatedSignFn = async (message: Uint8Array, chain: string) => {
+  return await relayerKeypair.signMessage(message);
+};
+
+const actionCode = await protocol.generate(
+  "delegation",
+  delegationProof,
+  "solana",
+  delegatedSignFn
+);
+
+// Relayer validates the code
+protocol.validate("delegation", actionCode);
 ```
 
 #### 2. Automated Trading Bots
 ```typescript
-// User authorizes trading bot for specific operations
-const tradingCertificate = await createDelegationCertificate(userWallet, 86400000); // 24 hours
+// User authorizes trading bot for 24 hours
+const delegationProof = {
+  walletPubkey: userWallet.publicKey.toString(),
+  delegatedPubkey: botKeypair.publicKey.toString(),
+  chain: "solana",
+  expiresAt: Date.now() + 86400000, // 24 hours
+  signature: await signDelegationProof(delegationProof)
+};
 
-// Bot can execute trades using delegated codes
-const tradeCode = await protocol.generateCode("delegation", tradingCertificate);
+// Bot generates codes using delegated keypair
+const botSignFn = async (message: Uint8Array, chain: string) => {
+  return await botKeypair.signMessage(message);
+};
+
+const tradeCode = await protocol.generate(
+  "delegation",
+  delegationProof,
+  "solana",
+  botSignFn
+);
 // Bot executes trade with this code
-```
-
-#### 3. Multi-Signature Workflows
-```typescript
-// Multiple users can delegate to a shared certificate
-const sharedCertificate = await createSharedDelegationCertificate([
-  user1Wallet,
-  user2Wallet,
-  user3Wallet
-]);
-
-// Any authorized user can generate codes
-const actionCode = await protocol.generateCode("delegation", sharedCertificate);
 ```
 
 ## Security Considerations
@@ -271,31 +330,36 @@ const actionCode = await protocol.generateCode("delegation", sharedCertificate);
    - Cannot be reused
 
 4. **Delegation Security**
-   - Delegation certificates are cryptographically signed
-   - Codes are bound to specific certificates
-   - Cross-certificate attacks are impossible
+   - Delegation proofs are cryptographically signed
+   - Codes are bound to specific delegation proofs
+   - Cross-proof attacks are impossible
 
 ### Best Practices
 
-1. **Secret Management**
-   - Use cryptographically secure random secrets
-   - Don't reuse secrets across different contexts
-   - Consider using deterministic secrets based on context
-
-2. **Certificate Expiration**
-   - Set appropriate expiration times for delegation certificates
+1. **Delegation Proof Expiration**
+   - Set appropriate expiration times for delegation proofs
    - Shorter expiration = higher security
    - Longer expiration = better UX
 
-3. **Relayer Security**
-   - Only trust relayers with full certificates
+2. **Relayer Security**
+   - Only trust relayers with valid delegation proofs
    - Never share private keys with relayers
    - Monitor relayer behavior
+
+3. **Issuer Field Usage**
+   - Use `iss` field when issuer and intent owner are different entities
+   - Ensure both signatures are present when `iss` is specified
+   - Omit `iss` when it's the same as `int` to save space
 
 4. **Code Validation**
    - Always validate codes server-side
    - Check expiration times
    - Verify the binding to the correct public key
+
+5. **Protocol Meta with Issuer**
+   - Use `iss` field when issuer differs from intent owner
+   - When `iss` is present, ensure transaction is signed by both
+   - If `iss` equals `int`, it's automatically omitted (optimization)
 
 ## Performance
 
@@ -312,29 +376,58 @@ npm install @actioncodes/protocol
 
 # Basic usage
 import { ActionCodesProtocol } from '@actioncodes/protocol';
+import { SolanaAdapter } from '@actioncodes/protocol';
 
-const protocol = new ActionCodesProtocol();
-
-// 1. Get canonical message for signing
-const canonicalMessage = protocol.getCanonicalMessageParts("your-public-key");
-
-// 2. Sign the canonical message with your wallet
-const signature = await yourWallet.signMessage(canonicalMessage);
-
-// 3. Generate a code with the signed canonical message
-const result = await protocol.generateCode("wallet", canonicalMessage, signature);
-// Optional: add secret for enhanced security
-// const result = await protocol.generateCode("wallet", canonicalMessage, signature, "optional-secret");
-
-// 4. Validate a code
-const isValid = await protocol.validateCode("wallet", result.actionCode, {
-  chain: "solana",
-  pubkey: "your-public-key",
-  signature: signature
+// Initialize protocol
+const protocol = new ActionCodesProtocol({
+  codeLength: 8,      // Code length (6-24 digits)
+  ttlMs: 120000,      // Time to live (2 minutes)
+  clockSkewMs: 5000   // Clock skew tolerance (5 seconds)
 });
+
+// Register Solana adapter
+protocol.registerAdapter('solana', new SolanaAdapter());
+
+// 1. Sign function for wallet
+const signFn = async (message: Uint8Array, chain: string) => {
+  // Sign the canonical message with your wallet
+  const signature = await yourWallet.signMessage(message);
+  return signature; // Returns base58-encoded signature
+};
+
+// 2. Generate a code
+const actionCode = await protocol.generate(
+  "wallet",
+  yourWallet.publicKey.toString(),
+  "solana",
+  signFn
+);
+
+// 3. Validate a code
+protocol.validate("wallet", actionCode);
+// Throws ProtocolError if validation fails
+```
+
+### Protocol Meta with Issuer Field
+
+When you need to separate the issuer (who created the code) from the intent owner (who will use it):
+
+```typescript
+import { buildProtocolMeta } from '@actioncodes/protocol';
+
+// Create protocol meta with issuer
+const meta = buildProtocolMeta({
+  ver: 2,
+  id: codeHash(actionCode.code),
+  int: intentOwnerPubkey,    // Who will use the code
+  iss: issuerPubkey,          // Who issued the code (optional)
+});
+
+// If iss is same as int, it's automatically omitted to save space
+// If iss is present, transaction must be signed by BOTH int and iss
 ```
 
 #### Vision
 
-Action Codes Protocol aim to be the OTP protocol for blockchains but allowing more than authentication: a simple, universal interaction layer usable across apps, chains, and eventually banks/CBDCs.
+Action Codes Protocol aim to be the OTP protocol for blockchains but allowing more than authentication: a simple, universal interaction layer usable across apps, chains, and eventually banks/CBDCs interacting with blockchains.
 

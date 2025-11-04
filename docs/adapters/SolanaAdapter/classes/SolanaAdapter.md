@@ -1,16 +1,16 @@
-[**@actioncodes/protocol-v2**](../../../README.md)
+[**@actioncodes/protocol**](../../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../../modules.md) / [adapters/SolanaAdapter](../README.md) / SolanaAdapter
+[@actioncodes/protocol](../../../modules.md) / [adapters/SolanaAdapter](../README.md) / SolanaAdapter
 
 # Class: SolanaAdapter
 
-Defined in: src/adapters/SolanaAdapter.ts:30
+Defined in: src/adapters/SolanaAdapter.ts:31
 
 ## Extends
 
-- [`BaseChainAdapter`](../../BaseChainAdapter/classes/BaseChainAdapter.md)\<[`SolanaContext`](../type-aliases/SolanaContext.md)\>
+- [`BaseChainAdapter`](../../BaseChainAdapter/classes/BaseChainAdapter.md)
 
 ## Constructors
 
@@ -30,17 +30,17 @@ Defined in: src/adapters/SolanaAdapter.ts:30
 
 ### getProtocolMeta()
 
-> **getProtocolMeta**(`tx`): `null` \| `string`
+> **getProtocolMeta**(`txString`): `null` \| `string`
 
-Defined in: src/adapters/SolanaAdapter.ts:81
+Defined in: src/adapters/SolanaAdapter.ts:280
 
-Extract protocol metadata string (memo) from a transaction, or null
+Extract protocol metadata string (memo) from a base64-encoded transaction, or null
 
 #### Parameters
 
-##### tx
+##### txString
 
-[`SolanaTransaction`](../type-aliases/SolanaTransaction.md)
+`string`
 
 #### Returns
 
@@ -50,17 +50,17 @@ Extract protocol metadata string (memo) from a transaction, or null
 
 ### parseMeta()
 
-> **parseMeta**(`tx`): `null` \| [`ProtocolMetaFields`](../../../utils/protocolMeta/interfaces/ProtocolMetaFields.md)
+> **parseMeta**(`txString`): `null` \| [`ProtocolMetaFields`](../../../utils/protocolMeta/interfaces/ProtocolMetaFields.md)
 
-Defined in: src/adapters/SolanaAdapter.ts:97
+Defined in: src/adapters/SolanaAdapter.ts:329
 
-Get parsed ProtocolMeta object, or null if none or invalid
+Get parsed ProtocolMeta object from base64-encoded transaction, or null if none or invalid
 
 #### Parameters
 
-##### tx
+##### txString
 
-[`SolanaTransaction`](../type-aliases/SolanaTransaction.md)
+`string`
 
 #### Returns
 
@@ -68,19 +68,47 @@ Get parsed ProtocolMeta object, or null if none or invalid
 
 ***
 
-### verify()
+### verifyMessageSignedByIntentOwner()
 
-> **verify**(`context`): `boolean`
+> **verifyMessageSignedByIntentOwner**(`message`, `signature`, `pubkey`): `void`
 
-Defined in: src/adapters/SolanaAdapter.ts:40
-
-Verify the signature over canonical message (protocol-level)
+Defined in: src/adapters/SolanaAdapter.ts:525
 
 #### Parameters
 
-##### context
+##### message
 
-[`ChainContext`](../../BaseChainAdapter/type-aliases/ChainContext.md)\<[`SolanaContext`](../type-aliases/SolanaContext.md)\>
+`string`
+
+##### signature
+
+`string`
+
+##### pubkey
+
+`string`
+
+#### Returns
+
+`void`
+
+***
+
+### verifyRevokeWithDelegation()
+
+> **verifyRevokeWithDelegation**(`delegatedActionCode`, `revokeSignature`): `boolean`
+
+Defined in: src/adapters/SolanaAdapter.ts:187
+
+#### Parameters
+
+##### delegatedActionCode
+
+[`DelegatedActionCode`](../../../types/interfaces/DelegatedActionCode.md)
+
+##### revokeSignature
+
+`string`
 
 #### Returns
 
@@ -88,17 +116,45 @@ Verify the signature over canonical message (protocol-level)
 
 #### Overrides
 
-[`BaseChainAdapter`](../../BaseChainAdapter/classes/BaseChainAdapter.md).[`verify`](../../BaseChainAdapter/classes/BaseChainAdapter.md#verify)
+[`BaseChainAdapter`](../../BaseChainAdapter/classes/BaseChainAdapter.md).[`verifyRevokeWithDelegation`](../../BaseChainAdapter/classes/BaseChainAdapter.md#verifyrevokewithdelegation)
+
+***
+
+### verifyRevokeWithWallet()
+
+> **verifyRevokeWithWallet**(`actionCode`, `revokeSignature`): `boolean`
+
+Defined in: src/adapters/SolanaAdapter.ts:154
+
+Verify the signature over canonical revoke message (protocol-level)
+
+#### Parameters
+
+##### actionCode
+
+[`ActionCode`](../../../types/interfaces/ActionCode.md)
+
+##### revokeSignature
+
+`string`
+
+#### Returns
+
+`boolean`
+
+#### Overrides
+
+[`BaseChainAdapter`](../../BaseChainAdapter/classes/BaseChainAdapter.md).[`verifyRevokeWithWallet`](../../BaseChainAdapter/classes/BaseChainAdapter.md#verifyrevokewithwallet)
 
 ***
 
 ### verifyTransactionMatchesCode()
 
-> **verifyTransactionMatchesCode**(`actionCode`, `tx`): `void`
+> **verifyTransactionMatchesCode**(`actionCode`, `txString`): `void`
 
-Defined in: src/adapters/SolanaAdapter.ts:143
+Defined in: src/adapters/SolanaAdapter.ts:375
 
-Validate that a transaction's memo meta aligns with the bound `actionCode`.
+Validate that a base64-encoded transaction's memo meta aligns with the bound `actionCode`.
 Throws ProtocolError if validation fails.
 
 #### Parameters
@@ -107,9 +163,9 @@ Throws ProtocolError if validation fails.
 
 [`ActionCode`](../../../types/interfaces/ActionCode.md)
 
-##### tx
+##### txString
 
-[`SolanaTransaction`](../type-aliases/SolanaTransaction.md)
+`string`
 
 #### Returns
 
@@ -119,19 +175,19 @@ Throws ProtocolError if validation fails.
 
 ### verifyTransactionSignedByIntentOwner()
 
-> **verifyTransactionSignedByIntentOwner**(`tx`): `void`
+> **verifyTransactionSignedByIntentOwner**(`txString`): `void`
 
-Defined in: src/adapters/SolanaAdapter.ts:184
+Defined in: src/adapters/SolanaAdapter.ts:413
 
-Verify that the transaction is signed by the "intendedFor" pubkey
+Verify that the base64-encoded transaction is signed by the "intendedFor" pubkey
 as declared in the protocol meta of the transaction.
 Throws ProtocolError if validation fails.
 
 #### Parameters
 
-##### tx
+##### txString
 
-[`SolanaTransaction`](../type-aliases/SolanaTransaction.md)
+`string`
 
 #### Returns
 
@@ -139,27 +195,68 @@ Throws ProtocolError if validation fails.
 
 ***
 
-### attachProtocolMeta()
+### verifyWithDelegation()
 
-> `static` **attachProtocolMeta**\<`T`\>(`tx`, `meta`): `T`
+> **verifyWithDelegation**(`delegatedActionCode`): `boolean`
 
-Defined in: src/adapters/SolanaAdapter.ts:257
+Defined in: src/adapters/SolanaAdapter.ts:71
 
-Attach protocol meta into a legacy or versioned transaction.
-
-⚠️ Note: this mutates the given transaction.
-
-#### Type Parameters
-
-##### T
-
-`T` *extends* [`SolanaTransaction`](../type-aliases/SolanaTransaction.md)
+Verify delegation proof signature
 
 #### Parameters
 
-##### tx
+##### delegatedActionCode
 
-`T`
+[`DelegatedActionCode`](../../../types/interfaces/DelegatedActionCode.md)
+
+#### Returns
+
+`boolean`
+
+#### Overrides
+
+[`BaseChainAdapter`](../../BaseChainAdapter/classes/BaseChainAdapter.md).[`verifyWithDelegation`](../../BaseChainAdapter/classes/BaseChainAdapter.md#verifywithdelegation)
+
+***
+
+### verifyWithWallet()
+
+> **verifyWithWallet**(`actionCode`): `boolean`
+
+Defined in: src/adapters/SolanaAdapter.ts:41
+
+Verify the signature over canonical message (protocol-level)
+
+#### Parameters
+
+##### actionCode
+
+[`ActionCode`](../../../types/interfaces/ActionCode.md)
+
+#### Returns
+
+`boolean`
+
+#### Overrides
+
+[`BaseChainAdapter`](../../BaseChainAdapter/classes/BaseChainAdapter.md).[`verifyWithWallet`](../../BaseChainAdapter/classes/BaseChainAdapter.md#verifywithwallet)
+
+***
+
+### attachProtocolMeta()
+
+> `static` **attachProtocolMeta**(`txString`, `meta`): `string`
+
+Defined in: src/adapters/SolanaAdapter.ts:560
+
+Attach protocol meta into a base64-encoded transaction and return the modified transaction as base64.
+Throws ProtocolError if the transaction already contains protocol meta.
+
+#### Parameters
+
+##### txString
+
+`string`
 
 ##### meta
 
@@ -167,7 +264,7 @@ Attach protocol meta into a legacy or versioned transaction.
 
 #### Returns
 
-`T`
+`string`
 
 ***
 
@@ -175,7 +272,7 @@ Attach protocol meta into a legacy or versioned transaction.
 
 > `static` **createProtocolMetaIx**(`meta`): `TransactionInstruction`
 
-Defined in: src/adapters/SolanaAdapter.ts:73
+Defined in: src/adapters/SolanaAdapter.ts:272
 
 Create a Solana memo instruction carrying protocol meta (for SDK/clients)
 

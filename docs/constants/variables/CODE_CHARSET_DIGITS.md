@@ -1,8 +1,8 @@
-[**@actioncodes/protocol-v2**](../../README.md)
+[**@actioncodes/protocol**](../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../modules.md) / [constants](../README.md) / CODE\_CHARSET\_DIGITS
+[@actioncodes/protocol](../../modules.md) / [constants](../README.md) / CODE\_CHARSET\_DIGITS
 
 # Variable: CODE\_CHARSET\_DIGITS
 

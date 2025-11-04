@@ -1,8 +1,8 @@
-[**@actioncodes/protocol-v2**](../../README.md)
+[**@actioncodes/protocol**](../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../modules.md) / utils/protocolMeta
+[@actioncodes/protocol](../../modules.md) / utils/protocolMeta
 
 # utils/protocolMeta
 

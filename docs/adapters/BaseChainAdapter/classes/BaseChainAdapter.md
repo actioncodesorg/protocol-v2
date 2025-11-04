@@ -1,51 +1,48 @@
-[**@actioncodes/protocol-v2**](../../../README.md)
+[**@actioncodes/protocol**](../../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../../modules.md) / [adapters/BaseChainAdapter](../README.md) / BaseChainAdapter
+[@actioncodes/protocol](../../../modules.md) / [adapters/BaseChainAdapter](../README.md) / BaseChainAdapter
 
-# Abstract Class: BaseChainAdapter\<TCtx\>
+# Abstract Class: BaseChainAdapter
 
-Defined in: src/adapters/BaseChainAdapter.ts:14
+Defined in: src/adapters/BaseChainAdapter.ts:18
 
 ## Extended by
 
-- [`NodeCryptoAdapter`](../../NodeCryptoAdapter/classes/NodeCryptoAdapter.md)
 - [`SolanaAdapter`](../../SolanaAdapter/classes/SolanaAdapter.md)
-
-## Type Parameters
-
-### TCtx
-
-`TCtx`
 
 ## Implements
 
-- [`ChainAdapter`](../interfaces/ChainAdapter.md)\<`TCtx`\>
+- [`ChainAdapter`](../interfaces/ChainAdapter.md)
 
 ## Constructors
 
 ### Constructor
 
-> **new BaseChainAdapter**\<`TCtx`\>(): `BaseChainAdapter`\<`TCtx`\>
+> **new BaseChainAdapter**(): `BaseChainAdapter`
 
 #### Returns
 
-`BaseChainAdapter`\<`TCtx`\>
+`BaseChainAdapter`
 
 ## Methods
 
-### verify()
+### verifyRevokeWithDelegation()
 
-> `abstract` **verify**(`context`): `boolean`
+> `abstract` **verifyRevokeWithDelegation**(`actionCode`, `revokeSignature`): `boolean`
 
-Defined in: src/adapters/BaseChainAdapter.ts:15
+Defined in: src/adapters/BaseChainAdapter.ts:25
 
 #### Parameters
 
-##### context
+##### actionCode
 
-[`ChainContext`](../type-aliases/ChainContext.md)\<`TCtx`\>
+[`DelegatedActionCode`](../../../types/interfaces/DelegatedActionCode.md)
+
+##### revokeSignature
+
+`string`
 
 #### Returns
 
@@ -53,4 +50,74 @@ Defined in: src/adapters/BaseChainAdapter.ts:15
 
 #### Implementation of
 
-[`ChainAdapter`](../interfaces/ChainAdapter.md).[`verify`](../interfaces/ChainAdapter.md#verify)
+[`ChainAdapter`](../interfaces/ChainAdapter.md).[`verifyRevokeWithDelegation`](../interfaces/ChainAdapter.md#verifyrevokewithdelegation)
+
+***
+
+### verifyRevokeWithWallet()
+
+> `abstract` **verifyRevokeWithWallet**(`actionCode`, `revokeSignature`): `boolean`
+
+Defined in: src/adapters/BaseChainAdapter.ts:21
+
+#### Parameters
+
+##### actionCode
+
+[`ActionCode`](../../../types/interfaces/ActionCode.md)
+
+##### revokeSignature
+
+`string`
+
+#### Returns
+
+`boolean`
+
+#### Implementation of
+
+[`ChainAdapter`](../interfaces/ChainAdapter.md).[`verifyRevokeWithWallet`](../interfaces/ChainAdapter.md#verifyrevokewithwallet)
+
+***
+
+### verifyWithDelegation()
+
+> `abstract` **verifyWithDelegation**(`actionCode`): `boolean`
+
+Defined in: src/adapters/BaseChainAdapter.ts:20
+
+#### Parameters
+
+##### actionCode
+
+[`DelegatedActionCode`](../../../types/interfaces/DelegatedActionCode.md)
+
+#### Returns
+
+`boolean`
+
+#### Implementation of
+
+[`ChainAdapter`](../interfaces/ChainAdapter.md).[`verifyWithDelegation`](../interfaces/ChainAdapter.md#verifywithdelegation)
+
+***
+
+### verifyWithWallet()
+
+> `abstract` **verifyWithWallet**(`actionCode`): `boolean`
+
+Defined in: src/adapters/BaseChainAdapter.ts:19
+
+#### Parameters
+
+##### actionCode
+
+[`ActionCode`](../../../types/interfaces/ActionCode.md)
+
+#### Returns
+
+`boolean`
+
+#### Implementation of
+
+[`ChainAdapter`](../interfaces/ChainAdapter.md).[`verifyWithWallet`](../interfaces/ChainAdapter.md#verifywithwallet)

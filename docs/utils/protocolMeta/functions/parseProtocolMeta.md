@@ -1,14 +1,14 @@
-[**@actioncodes/protocol-v2**](../../../README.md)
+[**@actioncodes/protocol**](../../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../../modules.md) / [utils/protocolMeta](../README.md) / parseProtocolMeta
+[@actioncodes/protocol](../../../modules.md) / [utils/protocolMeta](../README.md) / parseProtocolMeta
 
 # Function: parseProtocolMeta()
 
 > **parseProtocolMeta**(`input`): [`ProtocolMetaFields`](../interfaces/ProtocolMetaFields.md)
 
-Defined in: src/utils/protocolMeta.ts:34
+Defined in: src/utils/protocolMeta.ts:40
 
 ## Parameters
 

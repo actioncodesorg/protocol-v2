@@ -1,8 +1,8 @@
-[**@actioncodes/protocol-v2**](../../README.md)
+[**@actioncodes/protocol**](../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../modules.md) / adapters/SolanaAdapter
+[@actioncodes/protocol](../../modules.md) / adapters/SolanaAdapter
 
 # adapters/SolanaAdapter
 
@@ -12,5 +12,8 @@
 
 ## Type Aliases
 
-- [SolanaContext](type-aliases/SolanaContext.md)
 - [SolanaTransaction](type-aliases/SolanaTransaction.md)
+
+## Variables
+
+- [ADAPTER\_CHAIN\_NAME](variables/ADAPTER_CHAIN_NAME.md)

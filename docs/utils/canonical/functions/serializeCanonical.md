@@ -1,14 +1,14 @@
-[**@actioncodes/protocol-v2**](../../../README.md)
+[**@actioncodes/protocol**](../../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../../modules.md) / [utils/canonical](../README.md) / serializeCanonical
+[@actioncodes/protocol](../../../modules.md) / [utils/canonical](../README.md) / serializeCanonical
 
 # Function: serializeCanonical()
 
 > **serializeCanonical**(`parts`): `Uint8Array`
 
-Defined in: src/utils/canonical.ts:6
+Defined in: src/utils/canonical.ts:12
 
 ## Parameters
 

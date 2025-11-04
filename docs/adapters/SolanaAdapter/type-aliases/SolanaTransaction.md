@@ -1,13 +1,13 @@
-[**@actioncodes/protocol-v2**](../../../README.md)
+[**@actioncodes/protocol**](../../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../../modules.md) / [adapters/SolanaAdapter](../README.md) / SolanaTransaction
+[@actioncodes/protocol](../../../modules.md) / [adapters/SolanaAdapter](../README.md) / SolanaTransaction
 
 # Type Alias: SolanaTransaction
 
 > **SolanaTransaction** = `Transaction` \| `VersionedTransaction`
 
-Defined in: src/adapters/SolanaAdapter.ts:28
+Defined in: src/adapters/SolanaAdapter.ts:27
 
 Union of supported Solana txn types

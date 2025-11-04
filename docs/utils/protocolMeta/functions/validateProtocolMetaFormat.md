@@ -1,14 +1,14 @@
-[**@actioncodes/protocol-v2**](../../../README.md)
+[**@actioncodes/protocol**](../../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../../modules.md) / [utils/protocolMeta](../README.md) / validateProtocolMetaFormat
+[@actioncodes/protocol](../../../modules.md) / [utils/protocolMeta](../README.md) / validateProtocolMetaFormat
 
 # Function: validateProtocolMetaFormat()
 
 > **validateProtocolMetaFormat**(`input`): \{ `ok`: `true`; \} \| \{ `ok`: `false`; `reason`: `string`; \}
 
-Defined in: src/utils/protocolMeta.ts:74
+Defined in: src/utils/protocolMeta.ts:88
 
 ## Parameters
 

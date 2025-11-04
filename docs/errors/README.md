@@ -1,8 +1,8 @@
-[**@actioncodes/protocol-v2**](../README.md)
+[**@actioncodes/protocol**](../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../modules.md) / errors
+[@actioncodes/protocol](../modules.md) / errors
 
 # errors
 
@@ -13,6 +13,7 @@
 ## Classes
 
 - [ExpiredCodeError](classes/ExpiredCodeError.md)
+- [InvalidAdapterError](classes/InvalidAdapterError.md)
 - [InvalidCodeFormatError](classes/InvalidCodeFormatError.md)
 - [InvalidPubkeyFormatError](classes/InvalidPubkeyFormatError.md)
 - [InvalidSignatureError](classes/InvalidSignatureError.md)
@@ -20,3 +21,4 @@
 - [MissingMetaError](classes/MissingMetaError.md)
 - [ProtocolError](classes/ProtocolError.md)
 - [TransactionNotSignedByIntendedOwnerError](classes/TransactionNotSignedByIntendedOwnerError.md)
+- [TransactionNotSignedByIssuerError](classes/TransactionNotSignedByIssuerError.md)

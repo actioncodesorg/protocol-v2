@@ -1,20 +1,33 @@
-[**@actioncodes/protocol-v2**](../../README.md)
+[**@actioncodes/protocol**](../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../modules.md) / [types](../README.md) / ActionCode
+[@actioncodes/protocol](../../modules.md) / [types](../README.md) / ActionCode
 
 # Interface: ActionCode
 
-Defined in: src/types.ts:1
+Defined in: src/types.ts:5
+
+## Extended by
+
+- [`DelegatedActionCode`](DelegatedActionCode.md)
+- [`ActionCodeRevoke`](ActionCodeRevoke.md)
 
 ## Properties
+
+### chain
+
+> **chain**: `"solana"`
+
+Defined in: src/types.ts:6
+
+***
 
 ### code
 
 > **code**: `string`
 
-Defined in: src/types.ts:2
+Defined in: src/types.ts:7
 
 ***
 
@@ -22,7 +35,7 @@ Defined in: src/types.ts:2
 
 > **expiresAt**: `number`
 
-Defined in: src/types.ts:5
+Defined in: src/types.ts:10
 
 ***
 
@@ -30,31 +43,15 @@ Defined in: src/types.ts:5
 
 > **pubkey**: `string`
 
-Defined in: src/types.ts:3
+Defined in: src/types.ts:8
 
 ***
 
-### secret?
+### signature
 
-> `optional` **secret**: `string`
+> **signature**: `string`
 
-Defined in: src/types.ts:9
-
-***
-
-### secretHint?
-
-> `optional` **secretHint**: `string`
-
-Defined in: src/types.ts:7
-
-***
-
-### signature?
-
-> `optional` **signature**: `string`
-
-Defined in: src/types.ts:6
+Defined in: src/types.ts:11
 
 ***
 
@@ -62,4 +59,4 @@ Defined in: src/types.ts:6
 
 > **timestamp**: `number`
 
-Defined in: src/types.ts:4
+Defined in: src/types.ts:9

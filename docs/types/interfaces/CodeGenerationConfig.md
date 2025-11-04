@@ -1,12 +1,12 @@
-[**@actioncodes/protocol-v2**](../../README.md)
+[**@actioncodes/protocol**](../../README.md)
 
 ***
 
-[@actioncodes/protocol-v2](../../modules.md) / [types](../README.md) / CodeGenerationConfig
+[@actioncodes/protocol](../../modules.md) / [types](../README.md) / CodeGenerationConfig
 
 # Interface: CodeGenerationConfig
 
-Defined in: src/types.ts:19
+Defined in: src/types.ts:25
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: src/types.ts:19
 
 > `optional` **clockSkewMs**: `number`
 
-Defined in: src/types.ts:22
+Defined in: src/types.ts:28
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: src/types.ts:22
 
 > **codeLength**: `number`
 
-Defined in: src/types.ts:20
+Defined in: src/types.ts:26
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: src/types.ts:20
 
 > **ttlMs**: `number`
 
-Defined in: src/types.ts:21
+Defined in: src/types.ts:27
