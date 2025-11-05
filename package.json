@@ -15,16 +15,16 @@
   },
   "keywords": [
     "solana",
-    "ota-protocol",
-    "ota-protocol-sdk",
-    "ota-protocol-utils",
-    "ota-protocol-types",
-    "ota-protocol-constants"
+    "actioncodes protocol",
+    "actioncodes protocol sdk",
+    "actioncodes protocol utils",
+    "actioncodes protocol types",
+    "actioncodes protocol constants"
   ],
   "homepage": "https://actioncodes.org",
   "repository": {
     "type": "git",
-    "url": "https://github.com/otaprotocol/protocol-v2"
+    "url": "https://github.com/actioncodesorg/protocol-v2"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
