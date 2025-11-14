@@ -3,6 +3,7 @@ import {
   Transaction,
   VersionedTransaction,
   MessageV0,
+  PublicKey,
 } from "@solana/web3.js";
 import { MEMO_PROGRAM_ID } from "@solana/spl-memo";
 import bs58 from "bs58";
@@ -1220,6 +1221,520 @@ describe("SolanaAdapter", () => {
 
         // Signatures should be preserved
         expect(newTx.signatures).toEqual(versionedTx.signatures);
+      });
+
+      test("should attach protocol meta to real-world versioned transaction", () => {
+        // Real-world versioned transaction from user
+        const realWorldTxBase64 = "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAIABRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJcVK+0xG0BdrEcm/Hkr6Z1H4PuY00m0DZWlaiSI4yzPXrGYtE01Idv5RmYgJZzSqyvLeAnJubdLgkFo50tjIc0FPuO7+rkVqKZv5aj3ro6UFbpldwADRlXfO3UH8Kdxdy+3e0yW3vVdw+rFfjrcWk4CQB5xNgWiqtveEvYM5gVSNNsPqRj5JkyVUFmeK6jdCdRaJsXH2IXFhPaqx8vTFOM4Ays4dM7l4vYCbXcjpxa6uc3XpBk5CQDkMYNKQ5Dnd95nAPDhLdoML8huBj8/Ne6tXbFsFG2nytmloINfyxEbEIIIzDMrMFkCkqGRQR9gpF2oc7tXjNs7yynab23OsgZ4KZ35y08a1+NgAbTJ8aVPPXQUjRIbrQIwNvgS+Z6ebwMGRm/lIRcy/+ytunLDm+e8jOW7xfcSayxDmzpAAAAAB1KYnTCOpqHPEAsSa6gZG2vq6rkSqHm0NkPxKErBqp0Gp9UXGSxcUSGMyUw9SvF/WNruCJuh/UTj29mKAAAAAJaOW/7vgM1pG6Nq1liyPctr7DfcTEOdC/LXp6n21FgYBUXq7QJAs4y+jcuklkf07u4QjjdkcQj0ph6nlIfzjDYFSlNamSkhBk0k6HFg2jh8fDW13bySu4HkH6hAQQVEjXU+dESZ7i5Lotaq2UVNRJZDbzbODRBCU1bYcCI4BMq4BQoABQKAGgYACgAJA0BCDwAAAAAACwYCAwEBDAAIcK6i6FlczagLDQIDAAQFBg0HCA4PCQYQ8iPGiVLh8rZAQg8AAAAAAA8AhgFhY3Rpb25jb2Rlczp2ZXI9MiZpZD1kN2NkZGFkMTliZDkzNDE4MjUxNGQ4MzQ3MTcxNWM0ZGRlOGZhMTU5ZWE2ODIyYTM4NjUwZjg5NGYwOWM2ZmJlJmludD1HQjM1WmNNeFprSFlES3hCZDQyWFkzQnh2aVYyREtmRFI5ZUxiODVFTEg5WAHYjuLNFa79zhF9M1JA835XkY1lTFuoIrd910aQgFXUxAABjQ==";
+
+        // First, verify we can parse it
+        const adapter = new SolanaAdapter();
+        const existingMeta = adapter.getProtocolMeta(realWorldTxBase64);
+        
+        // This transaction already has protocol meta, so we should be able to parse it
+        expect(existingMeta).not.toBeNull();
+        
+        // Try to parse the meta
+        const parsedMeta = adapter.parseMeta(realWorldTxBase64);
+        expect(parsedMeta).not.toBeNull();
+        expect(parsedMeta?.ver).toBe(2);
+        
+        // Now try to attach new meta (this should fail because meta already exists)
+        const newMeta: ProtocolMetaFields = {
+          ver: 2,
+          id: "test-hash",
+          int: keypair.publicKey.toString(),
+        };
+        
+        expect(() => {
+          SolanaAdapter.attachProtocolMeta(realWorldTxBase64, newMeta);
+        }).toThrow("Transaction already contains protocol meta");
+      });
+
+      test("should preserve account key indices when attaching meta to versioned transaction", () => {
+        // Create a versioned transaction with multiple instructions that reference different account keys
+        const account1 = Keypair.generate().publicKey;
+        const account2 = Keypair.generate().publicKey;
+        const account3 = Keypair.generate().publicKey;
+        const program1 = Keypair.generate().publicKey;
+        const program2 = Keypair.generate().publicKey;
+
+        // Create a transaction with multiple instructions that use different account indices
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 0,
+            },
+            staticAccountKeys: [
+              keypair.publicKey, // 0: fee payer/signer
+              account1,          // 1
+              account2,          // 2
+              account3,          // 3
+              program1,          // 4: program ID for first instruction
+              program2,          // 5: program ID for second instruction
+            ],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [
+              {
+                programIdIndex: 4, // program1
+                accountKeyIndexes: [0, 1, 2], // references keypair, account1, account2
+                data: Buffer.from("instruction1"),
+              },
+              {
+                programIdIndex: 5, // program2
+                accountKeyIndexes: [0, 2, 3], // references keypair, account2, account3
+                data: Buffer.from("instruction2"),
+              },
+            ],
+            addressTableLookups: [],
+          })
+        );
+
+        const originalBase64 = Buffer.from(versionedTx.serialize()).toString(
+          "base64"
+        );
+
+        // Verify original transaction structure
+        const originalDeserialized = VersionedTransaction.deserialize(
+          Buffer.from(originalBase64, "base64")
+        );
+        const originalMsg = originalDeserialized.message as MessageV0;
+        expect(originalMsg.compiledInstructions.length).toBe(2);
+        expect(originalMsg.staticAccountKeys.length).toBe(6);
+
+        // Attach protocol meta (MEMO_PROGRAM_ID is not in static keys, so it will be added)
+        const meta: ProtocolMetaFields = {
+          ver: 2,
+          id: "test-hash",
+          int: keypair.publicKey.toString(),
+        };
+
+        const newBase64 = SolanaAdapter.attachProtocolMeta(
+          originalBase64,
+          meta
+        );
+
+        // Deserialize the new transaction
+        const newTx = VersionedTransaction.deserialize(
+          Buffer.from(newBase64, "base64")
+        );
+        const newMsg = newTx.message as MessageV0;
+
+        // Verify structure
+        expect(newMsg.compiledInstructions.length).toBe(3); // Should have 2 original + 1 memo
+        expect(newMsg.staticAccountKeys.length).toBe(7); // Should have 6 original + 1 MEMO_PROGRAM_ID
+
+        // CRITICAL: Verify that the original instructions still have correct account key indices
+        // The first instruction should still reference the same accounts
+        const firstIx = newMsg.compiledInstructions[0];
+        expect(firstIx.programIdIndex).toBe(4); // program1 should still be at index 4
+        expect(firstIx.accountKeyIndexes).toEqual([0, 1, 2]); // Should still reference same accounts
+
+        // The second instruction should still reference the same accounts
+        const secondIx = newMsg.compiledInstructions[1];
+        expect(secondIx.programIdIndex).toBe(5); // program2 should still be at index 5
+        expect(secondIx.accountKeyIndexes).toEqual([0, 2, 3]); // Should still reference same accounts
+
+        // Verify the account keys themselves are still correct
+        expect(newMsg.staticAccountKeys[0].equals(keypair.publicKey)).toBe(true);
+        expect(newMsg.staticAccountKeys[1].equals(account1)).toBe(true);
+        expect(newMsg.staticAccountKeys[2].equals(account2)).toBe(true);
+        expect(newMsg.staticAccountKeys[3].equals(account3)).toBe(true);
+        expect(newMsg.staticAccountKeys[4].equals(program1)).toBe(true);
+        expect(newMsg.staticAccountKeys[5].equals(program2)).toBe(true);
+        expect(newMsg.staticAccountKeys[6].equals(MEMO_PROGRAM_ID)).toBe(true);
+
+        // Verify the memo instruction
+        const memoIx = newMsg.compiledInstructions[2];
+        expect(memoIx.programIdIndex).toBe(6); // MEMO_PROGRAM_ID should be at index 6
+        expect(memoIx.accountKeyIndexes).toEqual([]); // Memo has no accounts
+      });
+
+      test("should preserve account key indices when MEMO_PROGRAM_ID already exists", () => {
+        // Create a versioned transaction where MEMO_PROGRAM_ID is already in static keys
+        const account1 = Keypair.generate().publicKey;
+        const program1 = Keypair.generate().publicKey;
+
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 0,
+            },
+            staticAccountKeys: [
+              keypair.publicKey, // 0: fee payer/signer
+              account1,          // 1
+              program1,          // 2: program ID
+              MEMO_PROGRAM_ID,   // 3: MEMO_PROGRAM_ID already present
+            ],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [
+              {
+                programIdIndex: 2, // program1
+                accountKeyIndexes: [0, 1], // references keypair, account1
+                data: Buffer.from("instruction1"),
+              },
+            ],
+            addressTableLookups: [],
+          })
+        );
+
+        const originalBase64 = Buffer.from(versionedTx.serialize()).toString(
+          "base64"
+        );
+
+        // Attach protocol meta (MEMO_PROGRAM_ID is already in static keys)
+        const meta: ProtocolMetaFields = {
+          ver: 2,
+          id: "test-hash",
+          int: keypair.publicKey.toString(),
+        };
+
+        const newBase64 = SolanaAdapter.attachProtocolMeta(
+          originalBase64,
+          meta
+        );
+
+        // Deserialize the new transaction
+        const newTx = VersionedTransaction.deserialize(
+          Buffer.from(newBase64, "base64")
+        );
+        const newMsg = newTx.message as MessageV0;
+
+        // Verify structure - MEMO_PROGRAM_ID should NOT be duplicated
+        expect(newMsg.staticAccountKeys.length).toBe(4); // Should still be 4, not 5
+        expect(newMsg.compiledInstructions.length).toBe(2); // Should have 1 original + 1 memo
+
+        // Verify the original instruction still has correct indices
+        const firstIx = newMsg.compiledInstructions[0];
+        expect(firstIx.programIdIndex).toBe(2); // program1 should still be at index 2
+        expect(firstIx.accountKeyIndexes).toEqual([0, 1]); // Should still reference same accounts
+
+        // Verify the memo instruction uses the existing MEMO_PROGRAM_ID index
+        const memoIx = newMsg.compiledInstructions[1];
+        expect(memoIx.programIdIndex).toBe(3); // MEMO_PROGRAM_ID should be at index 3
+      });
+
+      test("should preserve address table lookups when attaching meta", () => {
+        // Create a versioned transaction with address table lookups (like the real-world example)
+        const { PublicKey } = require("@solana/web3.js");
+        const addressTableKey = new PublicKey(
+          "FaMS3U4uBojvGn5FSDEPimddcXsCfwkKsFgMVVnDdxGb"
+        );
+
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 0,
+            },
+            staticAccountKeys: [keypair.publicKey],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [],
+            addressTableLookups: [
+              {
+                accountKey: addressTableKey,
+                writableIndexes: [],
+                readonlyIndexes: [141],
+              },
+            ],
+          })
+        );
+
+        const originalBase64 = Buffer.from(versionedTx.serialize()).toString(
+          "base64"
+        );
+
+        // Attach protocol meta
+        const meta: ProtocolMetaFields = {
+          ver: 2,
+          id: "test-hash",
+          int: keypair.publicKey.toString(),
+        };
+
+        const newBase64 = SolanaAdapter.attachProtocolMeta(
+          originalBase64,
+          meta
+        );
+
+        // Deserialize and verify address table lookups are preserved
+        const newTx = VersionedTransaction.deserialize(
+          Buffer.from(newBase64, "base64")
+        );
+        const newMsg = newTx.message as MessageV0;
+
+        expect(newMsg.addressTableLookups).toBeDefined();
+        expect(newMsg.addressTableLookups?.length).toBe(1);
+        expect(
+          newMsg.addressTableLookups?.[0]?.accountKey.equals(addressTableKey)
+        ).toBe(true);
+        expect(newMsg.addressTableLookups?.[0]?.readonlyIndexes).toEqual([
+          141,
+        ]);
+      });
+
+      test("should produce valid transaction that can be round-tripped after attaching meta", () => {
+        // Create a complex transaction similar to real-world usage
+        const account1 = Keypair.generate().publicKey;
+        const account2 = Keypair.generate().publicKey;
+        const program1 = Keypair.generate().publicKey;
+
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 1, // program1 is readonly
+            },
+            staticAccountKeys: [
+              keypair.publicKey, // 0: fee payer/signer
+              account1,          // 1: writable
+              account2,          // 2: writable
+              program1,          // 3: readonly program
+            ],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [
+              {
+                programIdIndex: 3, // program1
+                accountKeyIndexes: [0, 1, 2], // references keypair, account1, account2
+                data: Buffer.from("instruction data"),
+              },
+            ],
+            addressTableLookups: [],
+          })
+        );
+
+        const originalBase64 = Buffer.from(versionedTx.serialize()).toString(
+          "base64"
+        );
+
+        // Attach protocol meta
+        const meta: ProtocolMetaFields = {
+          ver: 2,
+          id: "test-hash",
+          int: keypair.publicKey.toString(),
+        };
+
+        const newBase64 = SolanaAdapter.attachProtocolMeta(
+          originalBase64,
+          meta
+        );
+
+        // Round-trip: deserialize and re-serialize to ensure it's valid
+        const roundTripTx = VersionedTransaction.deserialize(
+          Buffer.from(newBase64, "base64")
+        );
+        const roundTripBase64 = Buffer.from(roundTripTx.serialize()).toString(
+          "base64"
+        );
+
+        // Should be able to deserialize again
+        const finalTx = VersionedTransaction.deserialize(
+          Buffer.from(roundTripBase64, "base64")
+        );
+        const finalMsg = finalTx.message as MessageV0;
+
+        // Verify all instructions are still valid
+        expect(finalMsg.compiledInstructions.length).toBe(2);
+        
+        // Verify original instruction still works
+        const originalIx = finalMsg.compiledInstructions[0];
+        expect(originalIx.programIdIndex).toBe(3);
+        expect(originalIx.accountKeyIndexes).toEqual([0, 1, 2]);
+        
+        // Verify memo instruction
+        const memoIx = finalMsg.compiledInstructions[1];
+        expect(memoIx.programIdIndex).toBe(4); // MEMO_PROGRAM_ID should be at index 4
+        expect(finalMsg.staticAccountKeys[memoIx.programIdIndex].equals(MEMO_PROGRAM_ID)).toBe(true);
+      });
+
+      test("should handle full cycle: serialize -> deserialize -> attach meta -> serialize -> deserialize", () => {
+        // Step 1: Create versioned transaction with multiple instructions
+        const account1 = Keypair.generate().publicKey;
+        const account2 = Keypair.generate().publicKey;
+        const program1 = Keypair.generate().publicKey;
+        const program2 = Keypair.generate().publicKey;
+
+        const originalTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 2, // program1 and program2 are readonly
+            },
+            staticAccountKeys: [
+              keypair.publicKey, // 0: fee payer/signer
+              account1,          // 1: writable
+              account2,          // 2: writable
+              program1,          // 3: readonly program
+              program2,          // 4: readonly program
+            ],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [
+              {
+                programIdIndex: 3, // program1
+                accountKeyIndexes: [0, 1], // references keypair, account1
+                data: Buffer.from("instruction1-data"),
+              },
+              {
+                programIdIndex: 4, // program2
+                accountKeyIndexes: [0, 2], // references keypair, account2
+                data: Buffer.from("instruction2-data"),
+              },
+            ],
+            addressTableLookups: [],
+          })
+        );
+
+        // Step 2: Serialize the original transaction
+        const serialized1 = Buffer.from(originalTx.serialize()).toString("base64");
+        
+        // Step 3: Deserialize it
+        const deserialized1 = VersionedTransaction.deserialize(
+          Buffer.from(serialized1, "base64")
+        );
+        const msg1 = deserialized1.message as MessageV0;
+        
+        // Verify original structure
+        expect(msg1.staticAccountKeys.length).toBe(5);
+        expect(msg1.compiledInstructions.length).toBe(2);
+        expect(msg1.staticAccountKeys[0].equals(keypair.publicKey)).toBe(true);
+        expect(msg1.staticAccountKeys[3].equals(program1)).toBe(true);
+        expect(msg1.staticAccountKeys[4].equals(program2)).toBe(true);
+
+        // Step 4: Attach protocol meta
+        const meta: ProtocolMetaFields = {
+          ver: 2,
+          id: "test-hash-123",
+          int: keypair.publicKey.toString(),
+        };
+
+        const withMeta = SolanaAdapter.attachProtocolMeta(serialized1, meta);
+
+        // Step 5: Serialize the transaction with meta
+        const deserialized2 = VersionedTransaction.deserialize(
+          Buffer.from(withMeta, "base64")
+        );
+        const serialized2 = Buffer.from(deserialized2.serialize()).toString("base64");
+
+        // Step 6: Deserialize again
+        const deserialized3 = VersionedTransaction.deserialize(
+          Buffer.from(serialized2, "base64")
+        );
+        const msg3 = deserialized3.message as MessageV0;
+
+        // Verify final structure
+        expect(msg3.staticAccountKeys.length).toBe(6); // 5 original + 1 MEMO_PROGRAM_ID
+        expect(msg3.compiledInstructions.length).toBe(3); // 2 original + 1 memo
+
+        // Verify original instructions still have correct indices
+        const ix1 = msg3.compiledInstructions[0];
+        expect(ix1.programIdIndex).toBe(3); // program1 should still be at index 3
+        expect(ix1.accountKeyIndexes).toEqual([0, 1]);
+        expect(Buffer.from(ix1.data).toString()).toBe("instruction1-data");
+
+        const ix2 = msg3.compiledInstructions[1];
+        expect(ix2.programIdIndex).toBe(4); // program2 should still be at index 4
+        expect(ix2.accountKeyIndexes).toEqual([0, 2]);
+        expect(Buffer.from(ix2.data).toString()).toBe("instruction2-data");
+
+        // Verify memo instruction
+        const memoIx = msg3.compiledInstructions[2];
+        expect(memoIx.programIdIndex).toBe(5); // MEMO_PROGRAM_ID should be at index 5
+        expect(memoIx.accountKeyIndexes).toEqual([]);
+        expect(msg3.staticAccountKeys[memoIx.programIdIndex].equals(MEMO_PROGRAM_ID)).toBe(true);
+
+        // Verify all account keys are still correct
+        expect(msg3.staticAccountKeys[0].equals(keypair.publicKey)).toBe(true);
+        expect(msg3.staticAccountKeys[1].equals(account1)).toBe(true);
+        expect(msg3.staticAccountKeys[2].equals(account2)).toBe(true);
+        expect(msg3.staticAccountKeys[3].equals(program1)).toBe(true);
+        expect(msg3.staticAccountKeys[4].equals(program2)).toBe(true);
+        expect(msg3.staticAccountKeys[5].equals(MEMO_PROGRAM_ID)).toBe(true);
+
+        // Verify we can extract the protocol meta
+        const adapter = new SolanaAdapter();
+        const extractedMeta = adapter.parseMeta(serialized2);
+        expect(extractedMeta).not.toBeNull();
+        expect(extractedMeta?.ver).toBe(2);
+        expect(extractedMeta?.id).toBe("test-hash-123");
+        expect(extractedMeta?.int).toBe(keypair.publicKey.toString());
+      });
+
+      test("should handle Memo Program insertion in middle of account keys", () => {
+        // Create a transaction where Memo Program might be inserted in the middle
+        const account1 = Keypair.generate().publicKey;
+        const account2 = Keypair.generate().publicKey;
+        const tokenProgram = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+        const program1 = Keypair.generate().publicKey;
+
+        // Create transaction with Token Program at index 3
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 2, // tokenProgram and program1 are readonly
+            },
+            staticAccountKeys: [
+              keypair.publicKey,  // 0: fee payer/signer
+              account1,           // 1: writable
+              account2,           // 2: writable
+              tokenProgram,       // 3: Token Program (readonly)
+              program1,           // 4: program1 (readonly)
+            ],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [
+              {
+                programIdIndex: 3, // Token Program
+                accountKeyIndexes: [0, 1, 2], // references keypair, account1, account2
+                data: Buffer.from("token instruction"),
+              },
+              {
+                programIdIndex: 4, // program1
+                accountKeyIndexes: [0, 1],
+                data: Buffer.from("program1 instruction"),
+              },
+            ],
+            addressTableLookups: [],
+          })
+        );
+
+        const originalBase64 = Buffer.from(versionedTx.serialize()).toString("base64");
+
+        // Attach protocol meta
+        const meta: ProtocolMetaFields = {
+          ver: 2,
+          id: "test-hash",
+          int: keypair.publicKey.toString(),
+        };
+
+        const newBase64 = SolanaAdapter.attachProtocolMeta(originalBase64, meta);
+
+        // Deserialize and verify
+        const finalTx = VersionedTransaction.deserialize(Buffer.from(newBase64, "base64"));
+        const finalMsg = finalTx.message as MessageV0;
+
+        // CRITICAL: Verify Token Program instruction still references Token Program, not Memo Program
+        const tokenIx = finalMsg.compiledInstructions[0];
+        const tokenProgramIndex = tokenIx.programIdIndex;
+        const actualProgram = finalMsg.staticAccountKeys[tokenProgramIndex];
+
+        // This should pass - Token Program should still be at its original index
+        expect(actualProgram.equals(tokenProgram)).toBe(true);
+        expect(actualProgram.equals(MEMO_PROGRAM_ID)).toBe(false); // Should NOT be Memo Program
+
+        // Verify account indices are still correct
+        expect(tokenIx.accountKeyIndexes).toEqual([0, 1, 2]);
+
+        // Verify program1 instruction
+        const program1Ix = finalMsg.compiledInstructions[1];
+        expect(finalMsg.staticAccountKeys[program1Ix.programIdIndex].equals(program1)).toBe(true);
+        expect(program1Ix.accountKeyIndexes).toEqual([0, 1]);
       });
     });
   });
