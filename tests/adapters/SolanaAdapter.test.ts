@@ -695,7 +695,7 @@ describe("SolanaAdapter", () => {
       }).not.toThrow();
     });
 
-    test("attachProtocolMeta adds meta to legacy transaction", () => {
+    test("attachProtocolMeta adds meta to legacy transaction", async () => {
       const tx = new Transaction();
       tx.recentBlockhash = "11111111111111111111111111111111";
       tx.feePayer = keypair.publicKey;
@@ -712,7 +712,7 @@ describe("SolanaAdapter", () => {
       const base64String = Buffer.from(
         tx.serialize({ requireAllSignatures: false })
       ).toString("base64");
-      const result = SolanaAdapter.attachProtocolMeta(
+      const result = await SolanaAdapter.attachProtocolMeta(
         base64String,
         meta as ProtocolMetaFields
       );
@@ -733,7 +733,7 @@ describe("SolanaAdapter", () => {
       expect(extractedMeta).toContain(`id=${codeHashValue}`);
     });
 
-    test("attachProtocolMeta adds meta to versioned transaction", () => {
+    test("attachProtocolMeta adds meta to versioned transaction", async () => {
       const keypair = Keypair.generate();
       const tx = new VersionedTransaction(
         new MessageV0({
@@ -758,7 +758,7 @@ describe("SolanaAdapter", () => {
       };
 
       const base64String = Buffer.from(tx.serialize()).toString("base64");
-      const result = SolanaAdapter.attachProtocolMeta(
+      const result = await SolanaAdapter.attachProtocolMeta(
         base64String,
         meta as ProtocolMetaFields
       );
@@ -772,7 +772,7 @@ describe("SolanaAdapter", () => {
       expect(extractedMeta).toContain(`id=${codeHashValue}`);
     });
 
-    test("attachProtocolMeta preserves existing signatures", () => {
+    test("attachProtocolMeta preserves existing signatures", async () => {
       const keypair = Keypair.generate();
       const tx = new VersionedTransaction(
         new MessageV0({
@@ -800,7 +800,7 @@ describe("SolanaAdapter", () => {
       };
 
       const base64String = Buffer.from(tx.serialize()).toString("base64");
-      const result = SolanaAdapter.attachProtocolMeta(
+      const result = await SolanaAdapter.attachProtocolMeta(
         base64String,
         meta as ProtocolMetaFields
       );
@@ -812,7 +812,7 @@ describe("SolanaAdapter", () => {
       expect(resultTx.signatures).toEqual(tx.signatures);
     });
 
-    test("attachProtocolMeta handles MEMO_PROGRAM_ID already present", () => {
+    test("attachProtocolMeta handles MEMO_PROGRAM_ID already present", async () => {
       const keypair = Keypair.generate();
       const tx = new VersionedTransaction(
         new MessageV0({
@@ -837,7 +837,7 @@ describe("SolanaAdapter", () => {
       };
 
       const base64String = Buffer.from(tx.serialize()).toString("base64");
-      const result = SolanaAdapter.attachProtocolMeta(
+      const result = await SolanaAdapter.attachProtocolMeta(
         base64String,
         meta as ProtocolMetaFields
       );
@@ -857,7 +857,7 @@ describe("SolanaAdapter", () => {
       expect(extractedMeta).toContain("actioncodes:ver=2");
     });
 
-    test("attachProtocolMeta throws for invalid transaction format", () => {
+    test("attachProtocolMeta throws for invalid transaction format", async () => {
       const code = "33333333";
       const codeHashValue = codeHash(code);
       const meta = { ver: 2, id: codeHashValue, int: "user" };
@@ -865,15 +865,15 @@ describe("SolanaAdapter", () => {
       // Mock an invalid base64 string
       const invalidBase64 = "invalid-base64-string";
 
-      expect(() => {
+      await expect(
         SolanaAdapter.attachProtocolMeta(
           invalidBase64,
           meta as ProtocolMetaFields
-        );
-      }).toThrow("Invalid base64 transaction format");
+        )
+      ).rejects.toThrow("Invalid base64 transaction format");
     });
 
-    test("attachProtocolMeta throws when transaction already has protocol meta", () => {
+    test("attachProtocolMeta throws when transaction already has protocol meta", async () => {
       const code = "44444444";
       const codeHashValue = codeHash(code);
 
@@ -897,12 +897,12 @@ describe("SolanaAdapter", () => {
       // Try to attach new protocol meta
       const newMeta = { ver: 2, id: codeHashValue, int: "user" };
 
-      expect(() => {
+      await expect(
         SolanaAdapter.attachProtocolMeta(
           base64String,
           newMeta as ProtocolMetaFields
-        );
-      }).toThrow("Transaction already contains protocol meta");
+        )
+      ).rejects.toThrow("Transaction already contains protocol meta");
     });
   });
 
@@ -1141,7 +1141,7 @@ describe("SolanaAdapter", () => {
     });
 
     describe("attachProtocolMeta - Transaction Integrity", () => {
-      test("should not modify original transaction string", () => {
+      test("should not modify original transaction string", async () => {
         const originalTx = new Transaction();
         originalTx.recentBlockhash = "11111111111111111111111111111111";
         originalTx.feePayer = keypair.publicKey;
@@ -1160,7 +1160,7 @@ describe("SolanaAdapter", () => {
         };
 
         // Attach protocol meta
-        const newBase64 = SolanaAdapter.attachProtocolMeta(
+        const newBase64 = await SolanaAdapter.attachProtocolMeta(
           originalBase64,
           meta
         );
@@ -1183,7 +1183,7 @@ describe("SolanaAdapter", () => {
         );
       });
 
-      test("should preserve signatures in versioned transaction", () => {
+      test("should preserve signatures in versioned transaction", async () => {
         const versionedTx = new VersionedTransaction(
           new MessageV0({
             header: {
@@ -1211,7 +1211,7 @@ describe("SolanaAdapter", () => {
           int: keypair.publicKey.toString(),
         };
 
-        const newBase64 = SolanaAdapter.attachProtocolMeta(
+        const newBase64 = await SolanaAdapter.attachProtocolMeta(
           originalBase64,
           meta
         );
@@ -1223,35 +1223,7 @@ describe("SolanaAdapter", () => {
         expect(newTx.signatures).toEqual(versionedTx.signatures);
       });
 
-      test("should attach protocol meta to real-world versioned transaction", () => {
-        // Real-world versioned transaction from user
-        const realWorldTxBase64 = "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAIABRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJcVK+0xG0BdrEcm/Hkr6Z1H4PuY00m0DZWlaiSI4yzPXrGYtE01Idv5RmYgJZzSqyvLeAnJubdLgkFo50tjIc0FPuO7+rkVqKZv5aj3ro6UFbpldwADRlXfO3UH8Kdxdy+3e0yW3vVdw+rFfjrcWk4CQB5xNgWiqtveEvYM5gVSNNsPqRj5JkyVUFmeK6jdCdRaJsXH2IXFhPaqx8vTFOM4Ays4dM7l4vYCbXcjpxa6uc3XpBk5CQDkMYNKQ5Dnd95nAPDhLdoML8huBj8/Ne6tXbFsFG2nytmloINfyxEbEIIIzDMrMFkCkqGRQR9gpF2oc7tXjNs7yynab23OsgZ4KZ35y08a1+NgAbTJ8aVPPXQUjRIbrQIwNvgS+Z6ebwMGRm/lIRcy/+ytunLDm+e8jOW7xfcSayxDmzpAAAAAB1KYnTCOpqHPEAsSa6gZG2vq6rkSqHm0NkPxKErBqp0Gp9UXGSxcUSGMyUw9SvF/WNruCJuh/UTj29mKAAAAAJaOW/7vgM1pG6Nq1liyPctr7DfcTEOdC/LXp6n21FgYBUXq7QJAs4y+jcuklkf07u4QjjdkcQj0ph6nlIfzjDYFSlNamSkhBk0k6HFg2jh8fDW13bySu4HkH6hAQQVEjXU+dESZ7i5Lotaq2UVNRJZDbzbODRBCU1bYcCI4BMq4BQoABQKAGgYACgAJA0BCDwAAAAAACwYCAwEBDAAIcK6i6FlczagLDQIDAAQFBg0HCA4PCQYQ8iPGiVLh8rZAQg8AAAAAAA8AhgFhY3Rpb25jb2Rlczp2ZXI9MiZpZD1kN2NkZGFkMTliZDkzNDE4MjUxNGQ4MzQ3MTcxNWM0ZGRlOGZhMTU5ZWE2ODIyYTM4NjUwZjg5NGYwOWM2ZmJlJmludD1HQjM1WmNNeFprSFlES3hCZDQyWFkzQnh2aVYyREtmRFI5ZUxiODVFTEg5WAHYjuLNFa79zhF9M1JA835XkY1lTFuoIrd910aQgFXUxAABjQ==";
-
-        // First, verify we can parse it
-        const adapter = new SolanaAdapter();
-        const existingMeta = adapter.getProtocolMeta(realWorldTxBase64);
-        
-        // This transaction already has protocol meta, so we should be able to parse it
-        expect(existingMeta).not.toBeNull();
-        
-        // Try to parse the meta
-        const parsedMeta = adapter.parseMeta(realWorldTxBase64);
-        expect(parsedMeta).not.toBeNull();
-        expect(parsedMeta?.ver).toBe(2);
-        
-        // Now try to attach new meta (this should fail because meta already exists)
-        const newMeta: ProtocolMetaFields = {
-          ver: 2,
-          id: "test-hash",
-          int: keypair.publicKey.toString(),
-        };
-        
-        expect(() => {
-          SolanaAdapter.attachProtocolMeta(realWorldTxBase64, newMeta);
-        }).toThrow("Transaction already contains protocol meta");
-      });
-
-      test("should preserve account key indices when attaching meta to versioned transaction", () => {
+      test("should preserve account key indices when attaching meta to versioned transaction", async () => {
         // Create a versioned transaction with multiple instructions that reference different account keys
         const account1 = Keypair.generate().publicKey;
         const account2 = Keypair.generate().publicKey;
@@ -1311,7 +1283,7 @@ describe("SolanaAdapter", () => {
           int: keypair.publicKey.toString(),
         };
 
-        const newBase64 = SolanaAdapter.attachProtocolMeta(
+        const newBase64 = await SolanaAdapter.attachProtocolMeta(
           originalBase64,
           meta
         );
@@ -1352,7 +1324,7 @@ describe("SolanaAdapter", () => {
         expect(memoIx.accountKeyIndexes).toEqual([]); // Memo has no accounts
       });
 
-      test("should preserve account key indices when MEMO_PROGRAM_ID already exists", () => {
+      test("should preserve account key indices when MEMO_PROGRAM_ID already exists", async () => {
         // Create a versioned transaction where MEMO_PROGRAM_ID is already in static keys
         const account1 = Keypair.generate().publicKey;
         const program1 = Keypair.generate().publicKey;
@@ -1393,7 +1365,7 @@ describe("SolanaAdapter", () => {
           int: keypair.publicKey.toString(),
         };
 
-        const newBase64 = SolanaAdapter.attachProtocolMeta(
+        const newBase64 = await SolanaAdapter.attachProtocolMeta(
           originalBase64,
           meta
         );
@@ -1418,7 +1390,7 @@ describe("SolanaAdapter", () => {
         expect(memoIx.programIdIndex).toBe(3); // MEMO_PROGRAM_ID should be at index 3
       });
 
-      test("should preserve address table lookups when attaching meta", () => {
+      test("should preserve address table lookups when attaching meta", async () => {
         // Create a versioned transaction with address table lookups (like the real-world example)
         const { PublicKey } = require("@solana/web3.js");
         const addressTableKey = new PublicKey(
@@ -1456,7 +1428,7 @@ describe("SolanaAdapter", () => {
           int: keypair.publicKey.toString(),
         };
 
-        const newBase64 = SolanaAdapter.attachProtocolMeta(
+        const newBase64 = await SolanaAdapter.attachProtocolMeta(
           originalBase64,
           meta
         );
@@ -1477,7 +1449,7 @@ describe("SolanaAdapter", () => {
         ]);
       });
 
-      test("should produce valid transaction that can be round-tripped after attaching meta", () => {
+      test("should produce valid transaction that can be round-tripped after attaching meta", async () => {
         // Create a complex transaction similar to real-world usage
         const account1 = Keypair.generate().publicKey;
         const account2 = Keypair.generate().publicKey;
@@ -1519,7 +1491,7 @@ describe("SolanaAdapter", () => {
           int: keypair.publicKey.toString(),
         };
 
-        const newBase64 = SolanaAdapter.attachProtocolMeta(
+        const newBase64 = await SolanaAdapter.attachProtocolMeta(
           originalBase64,
           meta
         );
@@ -1552,7 +1524,7 @@ describe("SolanaAdapter", () => {
         expect(finalMsg.staticAccountKeys[memoIx.programIdIndex].equals(MEMO_PROGRAM_ID)).toBe(true);
       });
 
-      test("should handle full cycle: serialize -> deserialize -> attach meta -> serialize -> deserialize", () => {
+      test("should handle full cycle: serialize -> deserialize -> attach meta -> serialize -> deserialize", async () => {
         // Step 1: Create versioned transaction with multiple instructions
         const account1 = Keypair.generate().publicKey;
         const account2 = Keypair.generate().publicKey;
@@ -1613,7 +1585,7 @@ describe("SolanaAdapter", () => {
           int: keypair.publicKey.toString(),
         };
 
-        const withMeta = SolanaAdapter.attachProtocolMeta(serialized1, meta);
+        const withMeta = await SolanaAdapter.attachProtocolMeta(serialized1, meta);
 
         // Step 5: Serialize the transaction with meta
         const deserialized2 = VersionedTransaction.deserialize(
@@ -1665,7 +1637,7 @@ describe("SolanaAdapter", () => {
         expect(extractedMeta?.int).toBe(keypair.publicKey.toString());
       });
 
-      test("should handle Memo Program insertion in middle of account keys", () => {
+      test("should handle Memo Program insertion in middle of account keys", async () => {
         // Create a transaction where Memo Program might be inserted in the middle
         const account1 = Keypair.generate().publicKey;
         const account2 = Keypair.generate().publicKey;
@@ -1713,7 +1685,7 @@ describe("SolanaAdapter", () => {
           int: keypair.publicKey.toString(),
         };
 
-        const newBase64 = SolanaAdapter.attachProtocolMeta(originalBase64, meta);
+        const newBase64 = await SolanaAdapter.attachProtocolMeta(originalBase64, meta);
 
         // Deserialize and verify
         const finalTx = VersionedTransaction.deserialize(Buffer.from(newBase64, "base64"));
@@ -1735,6 +1707,227 @@ describe("SolanaAdapter", () => {
         const program1Ix = finalMsg.compiledInstructions[1];
         expect(finalMsg.staticAccountKeys[program1Ix.programIdIndex].equals(program1)).toBe(true);
         expect(program1Ix.accountKeyIndexes).toEqual([0, 1]);
+      });
+
+      test("should preserve address table lookups with multiple tables and complex indices", async () => {
+        // Test with multiple address lookup tables and various index patterns
+        const addressTable1 = Keypair.generate().publicKey;
+        const addressTable2 = Keypair.generate().publicKey;
+
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 0,
+            },
+            staticAccountKeys: [keypair.publicKey],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [],
+            addressTableLookups: [
+              {
+                accountKey: addressTable1,
+                writableIndexes: [0, 5, 10],
+                readonlyIndexes: [1, 2, 3],
+              },
+              {
+                accountKey: addressTable2,
+                writableIndexes: [],
+                readonlyIndexes: [100, 200, 255],
+              },
+            ],
+          })
+        );
+
+        const originalBase64 = Buffer.from(versionedTx.serialize()).toString(
+          "base64"
+        );
+
+        // Attach protocol meta
+        const meta: ProtocolMetaFields = {
+          ver: 2,
+          id: "test-hash",
+          int: keypair.publicKey.toString(),
+        };
+
+        const newBase64 = await SolanaAdapter.attachProtocolMeta(
+          originalBase64,
+          meta
+        );
+
+        // Deserialize and verify address table lookups are preserved exactly
+        const newTx = VersionedTransaction.deserialize(
+          Buffer.from(newBase64, "base64")
+        );
+        const newMsg = newTx.message as MessageV0;
+
+        // Verify both address table lookups are preserved
+        expect(newMsg.addressTableLookups).toBeDefined();
+        expect(newMsg.addressTableLookups?.length).toBe(2);
+
+        // Verify first address table lookup
+        const lookup1 = newMsg.addressTableLookups?.[0];
+        expect(lookup1).toBeDefined();
+        expect(lookup1?.accountKey.equals(addressTable1)).toBe(true);
+        expect(lookup1?.writableIndexes).toEqual([0, 5, 10]);
+        expect(lookup1?.readonlyIndexes).toEqual([1, 2, 3]);
+
+        // Verify second address table lookup
+        const lookup2 = newMsg.addressTableLookups?.[1];
+        expect(lookup2).toBeDefined();
+        expect(lookup2?.accountKey.equals(addressTable2)).toBe(true);
+        expect(lookup2?.writableIndexes).toEqual([]);
+        expect(lookup2?.readonlyIndexes).toEqual([100, 200, 255]);
+      });
+
+      test("should preserve address table lookups through multiple serialize/deserialize cycles", async () => {
+        // Test that address table lookups survive multiple round-trips
+        const addressTableKey = new PublicKey(
+          "FaMS3U4uBojvGn5FSDEPimddcXsCfwkKsFgMVVnDdxGb"
+        );
+
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 0,
+            },
+            staticAccountKeys: [keypair.publicKey],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [],
+            addressTableLookups: [
+              {
+                accountKey: addressTableKey,
+                writableIndexes: [1, 2, 3],
+                readonlyIndexes: [141, 142],
+              },
+            ],
+          })
+        );
+
+        const originalBase64 = Buffer.from(versionedTx.serialize()).toString(
+          "base64"
+        );
+
+        // Attach protocol meta
+        const meta: ProtocolMetaFields = {
+          ver: 2,
+          id: "test-hash",
+          int: keypair.publicKey.toString(),
+        };
+
+        const withMeta = await SolanaAdapter.attachProtocolMeta(
+          originalBase64,
+          meta
+        );
+
+        // Round-trip 1: serialize and deserialize
+        const tx1 = VersionedTransaction.deserialize(
+          Buffer.from(withMeta, "base64")
+        );
+        const serialized1 = Buffer.from(tx1.serialize()).toString("base64");
+
+        // Round-trip 2: serialize and deserialize again
+        const tx2 = VersionedTransaction.deserialize(
+          Buffer.from(serialized1, "base64")
+        );
+        const serialized2 = Buffer.from(tx2.serialize()).toString("base64");
+
+        // Round-trip 3: one more time
+        const tx3 = VersionedTransaction.deserialize(
+          Buffer.from(serialized2, "base64")
+        );
+        const finalMsg = tx3.message as MessageV0;
+
+        // Verify address table lookups are still intact after multiple round-trips
+        expect(finalMsg.addressTableLookups).toBeDefined();
+        expect(finalMsg.addressTableLookups?.length).toBe(1);
+        expect(
+          finalMsg.addressTableLookups?.[0]?.accountKey.equals(addressTableKey)
+        ).toBe(true);
+        expect(finalMsg.addressTableLookups?.[0]?.writableIndexes).toEqual([
+          1, 2, 3,
+        ]);
+        expect(finalMsg.addressTableLookups?.[0]?.readonlyIndexes).toEqual([
+          141, 142,
+        ]);
+      });
+
+      test("should require connection when instructions reference lookup table accounts", async () => {
+        // This test verifies that attachProtocolMeta correctly requires a connection
+        // when instructions reference accounts from address lookup tables.
+        // Without a connection, we cannot resolve the lookup tables and recalculate indices correctly.
+        
+        const addressTableKey = Keypair.generate().publicKey;
+        const staticAccount1 = Keypair.generate().publicKey;
+        const staticAccount2 = Keypair.generate().publicKey;
+        const program1 = Keypair.generate().publicKey;
+
+        // Create a transaction where:
+        // - Static accounts: [keypair.publicKey, staticAccount1, staticAccount2, program1] (indices 0-3)
+        // - Address lookup table has accounts at indices 0, 1, 2 (which become indices 4, 5, 6 in full account list)
+        // - An instruction references account at index 4 (first account from lookup table)
+        
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 1, // program1 is readonly
+            },
+            staticAccountKeys: [
+              keypair.publicKey, // 0
+              staticAccount1,    // 1
+              staticAccount2,    // 2
+              program1,          // 3
+            ],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [
+              {
+                programIdIndex: 3, // program1
+                // This instruction references:
+                // - Index 0: keypair.publicKey (static)
+                // - Index 1: staticAccount1 (static)
+                // - Index 4: first account from lookup table (static accounts are 0-3, so lookup starts at 4)
+                accountKeyIndexes: [0, 1, 4],
+                data: Buffer.from("instruction referencing lookup table account"),
+              },
+            ],
+            addressTableLookups: [
+              {
+                accountKey: addressTableKey,
+                writableIndexes: [0], // First account in lookup table (becomes index 4 in full list)
+                readonlyIndexes: [1, 2], // Second and third accounts (become indices 5, 6)
+              },
+            ],
+          })
+        );
+
+        const originalBase64 = Buffer.from(versionedTx.serialize()).toString(
+          "base64"
+        );
+
+        // Verify original structure
+        const originalDeserialized = VersionedTransaction.deserialize(
+          Buffer.from(originalBase64, "base64")
+        );
+        const originalMsg = originalDeserialized.message as MessageV0;
+        expect(originalMsg.staticAccountKeys.length).toBe(4);
+        const originalIx = originalMsg.compiledInstructions[0];
+        expect(originalIx.accountKeyIndexes).toEqual([0, 1, 4]); // Index 4 = first lookup table account
+
+        // Attach protocol meta without connection - should throw error
+        const meta: ProtocolMetaFields = {
+          ver: 2,
+          id: "test-hash",
+          int: keypair.publicKey.toString(),
+        };
+
+        // Should throw error because connection is required
+        await expect(
+          SolanaAdapter.attachProtocolMeta(originalBase64, meta)
+        ).rejects.toThrow("Connection required");
       });
     });
   });

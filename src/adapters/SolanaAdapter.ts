@@ -6,6 +6,9 @@ import {
   VersionedTransaction,
   TransactionInstruction,
   MessageV0,
+  Connection,
+  TransactionMessage,
+  AddressLookupTableAccount,
 } from "@solana/web3.js";
 import { createMemoInstruction, MEMO_PROGRAM_ID } from "@solana/spl-memo";
 import { BaseChainAdapter } from "./BaseChainAdapter";
@@ -556,11 +559,18 @@ export class SolanaAdapter extends BaseChainAdapter {
   /**
    * Attach protocol meta into a base64-encoded transaction and return the modified transaction as base64.
    * Throws ProtocolError if the transaction already contains protocol meta.
+   * 
+   * @param txString - Base64-encoded transaction string
+   * @param meta - Protocol metadata to attach
+   * @param connection - Optional Solana connection. Required if transaction has address lookup tables
+   *                    and instructions reference accounts from those tables.
+   * @returns Base64-encoded transaction with protocol meta attached
    */
-  static attachProtocolMeta(
+  static async attachProtocolMeta(
     txString: string,
-    meta: ProtocolMetaFields
-  ): string {
+    meta: ProtocolMetaFields,
+    connection?: Connection
+  ): Promise<string> {
     // Check if transaction already has protocol meta
     const adapter = new SolanaAdapter();
     const existingMeta = adapter.getProtocolMeta(txString);
@@ -582,38 +592,95 @@ export class SolanaAdapter extends BaseChainAdapter {
       if (versionedTx.message instanceof MessageV0) {
         const msg = versionedTx.message;
 
-        // Extend static account keys with programId if missing
-        const newStaticKeys = [...msg.staticAccountKeys];
-        if (!newStaticKeys.some((k) => k.equals(MEMO_PROGRAM_ID))) {
-          newStaticKeys.push(MEMO_PROGRAM_ID);
-        }
+        // Check if we need to handle address lookup tables
+        const hasAddressTableLookups =
+          msg.addressTableLookups && msg.addressTableLookups.length > 0;
 
-        // Program ID index
-        const programIdIndex = newStaticKeys.findIndex((k) =>
-          k.equals(MEMO_PROGRAM_ID)
+        // Check if any instruction references accounts beyond static account keys
+        // (which would indicate they reference lookup table accounts)
+        const numStaticAccounts = msg.staticAccountKeys.length;
+        const referencesLookupAccounts = msg.compiledInstructions.some((ix) =>
+          ix.accountKeyIndexes.some((idx) => idx >= numStaticAccounts)
         );
 
-        // Memo instruction as compiled instruction
-        const compiledIx = {
-          programIdIndex,
-          accountKeyIndexes: [],
-          data: metaIx.data,
-        };
+        // If we have lookup tables and instructions reference them, we need a connection
+        if (hasAddressTableLookups && referencesLookupAccounts) {
+          if (!connection) {
+            throw ProtocolError.invalidTransactionFormat(
+              "Connection required: Transaction uses address lookup tables and instructions reference accounts from those tables. A Solana connection is needed to resolve lookup tables and correctly recalculate account indices."
+            );
+          }
 
-        const newMsg = new MessageV0({
-          header: msg.header,
-          staticAccountKeys: newStaticKeys,
-          recentBlockhash: msg.recentBlockhash,
-          compiledInstructions: [...msg.compiledInstructions, compiledIx],
-          addressTableLookups: msg.addressTableLookups,
-        });
+          // Resolve address lookup tables
+          const addressLookupTableAccounts: AddressLookupTableAccount[] = [];
+          for (const lookup of msg.addressTableLookups) {
+            try {
+              const lookupTableAccount = await connection.getAddressLookupTable(
+                lookup.accountKey
+              );
+              if (lookupTableAccount.value) {
+                addressLookupTableAccounts.push(lookupTableAccount.value);
+              }
+            } catch (error) {
+              throw ProtocolError.invalidTransactionFormat(
+                `Failed to resolve address lookup table ${lookup.accountKey.toString()}: ${error}`
+              );
+            }
+          }
 
-        // Re-wrap in VersionedTransaction
-        const newTx = new VersionedTransaction(newMsg);
-        // Preserve existing signatures if any
-        newTx.signatures = versionedTx.signatures;
+          // Decompile the message with resolved lookup tables
+          const decompiledMessage = TransactionMessage.decompile(msg, {
+            addressLookupTableAccounts,
+          });
 
-        return Buffer.from(newTx.serialize()).toString("base64");
+          // Add memo instruction (programId will be added automatically during compilation)
+          decompiledMessage.instructions.push(metaIx);
+
+          // Recompile - this will correctly recalculate all account indices
+          const recompiledMessage =
+            decompiledMessage.compileToV0Message(addressLookupTableAccounts);
+
+          // Re-wrap in VersionedTransaction
+          const newTx = new VersionedTransaction(recompiledMessage);
+          // Preserve existing signatures if any
+          newTx.signatures = versionedTx.signatures;
+
+          return Buffer.from(newTx.serialize()).toString("base64");
+        } else {
+          // Simple case: no lookup tables or no instructions reference them
+          // Use the original simple approach
+          const newStaticKeys = [...msg.staticAccountKeys];
+          if (!newStaticKeys.some((k) => k.equals(MEMO_PROGRAM_ID))) {
+            newStaticKeys.push(MEMO_PROGRAM_ID);
+          }
+
+          // Program ID index
+          const programIdIndex = newStaticKeys.findIndex((k) =>
+            k.equals(MEMO_PROGRAM_ID)
+          );
+
+          // Memo instruction as compiled instruction
+          const compiledIx = {
+            programIdIndex,
+            accountKeyIndexes: [],
+            data: metaIx.data,
+          };
+
+          const newMsg = new MessageV0({
+            header: msg.header,
+            staticAccountKeys: newStaticKeys,
+            recentBlockhash: msg.recentBlockhash,
+            compiledInstructions: [...msg.compiledInstructions, compiledIx],
+            addressTableLookups: msg.addressTableLookups,
+          });
+
+          // Re-wrap in VersionedTransaction
+          const newTx = new VersionedTransaction(newMsg);
+          // Preserve existing signatures if any
+          newTx.signatures = versionedTx.signatures;
+
+          return Buffer.from(newTx.serialize()).toString("base64");
+        }
       } else {
         // This is likely a legacy transaction that was incorrectly deserialized as versioned
         // Fall back to legacy deserialization
@@ -626,7 +693,12 @@ export class SolanaAdapter extends BaseChainAdapter {
           legacyTx.serialize({ requireAllSignatures: false })
         ).toString("base64");
       }
-    } catch {
+    } catch (error) {
+      // If it's already a ProtocolError, re-throw it
+      if (error instanceof ProtocolError) {
+        throw error;
+      }
+
       try {
         // Fallback to legacy transaction
         const legacyTx = Transaction.from(Buffer.from(txString, "base64"));
@@ -639,7 +711,7 @@ export class SolanaAdapter extends BaseChainAdapter {
         ).toString("base64");
       } catch {
         throw ProtocolError.invalidTransactionFormat(
-          "Invalid base64 transaction format"
+          `Invalid base64 transaction format: ${error}`
         );
       }
     }
