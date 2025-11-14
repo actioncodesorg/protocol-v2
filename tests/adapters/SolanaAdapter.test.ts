@@ -772,7 +772,7 @@ describe("SolanaAdapter", () => {
       expect(extractedMeta).toContain(`id=${codeHashValue}`);
     });
 
-    test("attachProtocolMeta preserves existing signatures", async () => {
+    test("attachProtocolMeta clears signatures when message changes", async () => {
       const keypair = Keypair.generate();
       const tx = new VersionedTransaction(
         new MessageV0({
@@ -805,11 +805,16 @@ describe("SolanaAdapter", () => {
         meta as ProtocolMetaFields
       );
 
-      // Should preserve signatures
+      // Signatures should be cleared (empty) since message changed
       const resultTx = VersionedTransaction.deserialize(
         Buffer.from(result, "base64")
       );
-      expect(resultTx.signatures).toEqual(tx.signatures);
+      expect(resultTx.signatures.length).toBe(tx.signatures.length);
+      // All signatures should be empty (64 bytes of zeros)
+      resultTx.signatures.forEach((sig) => {
+        expect(sig.length).toBe(64);
+        expect(sig.every((byte) => byte === 0)).toBe(true);
+      });
     });
 
     test("attachProtocolMeta handles MEMO_PROGRAM_ID already present", async () => {
@@ -1183,7 +1188,7 @@ describe("SolanaAdapter", () => {
         );
       });
 
-      test("should preserve signatures in versioned transaction", async () => {
+      test("should clear signatures in versioned transaction when message changes", async () => {
         const versionedTx = new VersionedTransaction(
           new MessageV0({
             header: {
@@ -1219,8 +1224,13 @@ describe("SolanaAdapter", () => {
           Buffer.from(newBase64, "base64")
         );
 
-        // Signatures should be preserved
-        expect(newTx.signatures).toEqual(versionedTx.signatures);
+        // Signatures should be cleared (empty) since message changed
+        expect(newTx.signatures.length).toBe(versionedTx.signatures.length);
+        // All signatures should be empty (64 bytes of zeros)
+        newTx.signatures.forEach((sig) => {
+          expect(sig.length).toBe(64);
+          expect(sig.every((byte) => byte === 0)).toBe(true);
+        });
       });
 
       test("should preserve account key indices when attaching meta to versioned transaction", async () => {

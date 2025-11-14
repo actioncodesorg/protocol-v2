@@ -642,8 +642,14 @@ export class SolanaAdapter extends BaseChainAdapter {
 
           // Re-wrap in VersionedTransaction
           const newTx = new VersionedTransaction(recompiledMessage);
-          // Preserve existing signatures if any
-          newTx.signatures = versionedTx.signatures;
+          // Always create fresh empty signatures array to ensure clean transaction structure
+          // This is important for wallet compatibility (e.g., Solflare) which may validate
+          // the transaction structure before signing
+          const numSignatures = recompiledMessage.header.numRequiredSignatures;
+          newTx.signatures = Array.from(
+            { length: numSignatures },
+            () => new Uint8Array(64)
+          );
 
           return Buffer.from(newTx.serialize()).toString("base64");
         } else {
@@ -676,8 +682,14 @@ export class SolanaAdapter extends BaseChainAdapter {
 
           // Re-wrap in VersionedTransaction
           const newTx = new VersionedTransaction(newMsg);
-          // Preserve existing signatures if any
-          newTx.signatures = versionedTx.signatures;
+          // Always create fresh empty signatures array to ensure clean transaction structure
+          // This is important for wallet compatibility (e.g., Solflare) which may validate
+          // the transaction structure before signing
+          const numSignatures = newMsg.header.numRequiredSignatures;
+          newTx.signatures = Array.from(
+            { length: numSignatures },
+            () => new Uint8Array(64)
+          );
 
           return Buffer.from(newTx.serialize()).toString("base64");
         }
