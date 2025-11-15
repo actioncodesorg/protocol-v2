@@ -695,6 +695,326 @@ describe("SolanaAdapter", () => {
       }).not.toThrow();
     });
 
+    describe("verifyTransactionSignedByIntentOwner - Versioned Transaction with Address Lookup Tables", () => {
+      test("should verify versioned transaction with lookup tables when signer is in staticAccountKeys", () => {
+        const intendedKeypair = Keypair.generate();
+        const code = "12345678";
+        const codeHashValue = codeHash(code);
+
+        // Create a versioned transaction with address lookup tables
+        // Signer must be in staticAccountKeys (Solana requirement)
+        const lookupTableAccount = Keypair.generate().publicKey;
+        const otherAccount = Keypair.generate().publicKey;
+        const programId = Keypair.generate().publicKey;
+
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 1, // programId is readonly
+            },
+            staticAccountKeys: [
+              intendedKeypair.publicKey, // 0: signer (fee payer)
+              programId, // 1: program
+            ],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [
+              {
+                programIdIndex: 1, // programId
+                accountKeyIndexes: [0, 2], // 0 = signer, 2 = account from lookup table
+                data: Buffer.from("test instruction"),
+              },
+            ],
+            addressTableLookups: [
+              {
+                accountKey: lookupTableAccount,
+                writableIndexes: [0], // Account at index 0 in lookup table becomes index 2 overall
+                readonlyIndexes: [],
+              },
+            ],
+          })
+        );
+
+        // Sign the transaction
+        versionedTx.sign([intendedKeypair]);
+
+        // Attach protocol meta
+        const meta: ProtocolMetaFields = {
+          ver: 2,
+          id: codeHashValue,
+          int: intendedKeypair.publicKey.toString(),
+        };
+
+        // Note: We need to attach meta first, then verify
+        // But attachProtocolMeta clears signatures, so we need to re-sign
+        // For this test, let's create the transaction with meta already attached
+        const txWithMeta = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 2, // programId and MEMO_PROGRAM_ID are readonly
+            },
+            staticAccountKeys: [
+              intendedKeypair.publicKey, // 0: signer
+              programId, // 1: program
+              MEMO_PROGRAM_ID, // 2: memo program
+            ],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [
+              {
+                programIdIndex: 1, // programId
+                accountKeyIndexes: [0, 3], // 0 = signer, 3 = account from lookup table
+                data: Buffer.from("test instruction"),
+              },
+              {
+                programIdIndex: 2, // MEMO_PROGRAM_ID
+                accountKeyIndexes: [],
+                data: Buffer.from(
+                  `actioncodes:ver=2&id=${codeHashValue}&int=${intendedKeypair.publicKey.toString()}`
+                ),
+              },
+            ],
+            addressTableLookups: [
+              {
+                accountKey: lookupTableAccount,
+                writableIndexes: [0], // Account becomes index 3 overall
+                readonlyIndexes: [],
+              },
+            ],
+          })
+        );
+
+        txWithMeta.sign([intendedKeypair]);
+
+        const base64String = Buffer.from(txWithMeta.serialize()).toString(
+          "base64"
+        );
+
+        // Current implementation should work because signer is in staticAccountKeys
+        expect(() => {
+          adapter.verifyTransactionSignedByIntentOwner(base64String);
+        }).not.toThrow();
+      });
+
+      test("should demonstrate potential issue: only checks staticAccountKeys, not resolved lookup table keys", () => {
+        // This test demonstrates the issue: the current implementation only checks
+        // msg.staticAccountKeys[i] instead of using msg.getAccountKeys().get(i)
+        // While signers must be in staticAccountKeys in Solana, using getAccountKeys()
+        // is the recommended approach for future-proofing and consistency.
+
+        const intendedKeypair = Keypair.generate();
+        const code = "12345678";
+        const codeHashValue = codeHash(code);
+
+        // Create a versioned transaction WITHOUT lookup tables to demonstrate getAccountKeys() API
+        // (getAccountKeys() requires lookup tables to be resolved if present)
+        const programId = Keypair.generate().publicKey;
+
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 2, // programId and MEMO_PROGRAM_ID
+            },
+            staticAccountKeys: [
+              intendedKeypair.publicKey, // 0: signer (must be static)
+              programId, // 1: program
+              MEMO_PROGRAM_ID, // 2: memo program
+            ],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [
+              {
+                programIdIndex: 1, // programId
+                accountKeyIndexes: [0], // signer
+                data: Buffer.from("test instruction"),
+              },
+              {
+                programIdIndex: 2, // MEMO_PROGRAM_ID
+                accountKeyIndexes: [],
+                data: Buffer.from(
+                  `actioncodes:ver=2&id=${codeHashValue}&int=${intendedKeypair.publicKey.toString()}`
+                ),
+              },
+            ],
+            addressTableLookups: [], // No lookup tables for this test
+          })
+        );
+
+        versionedTx.sign([intendedKeypair]);
+
+        const base64String = Buffer.from(versionedTx.serialize()).toString(
+          "base64"
+        );
+
+        // Verify the transaction structure
+        const deserialized = VersionedTransaction.deserialize(
+          Buffer.from(base64String, "base64")
+        );
+        const msg = deserialized.message as MessageV0;
+
+        // Demonstrate the difference:
+        // - Current code uses: msg.staticAccountKeys[i]
+        // - Recommended: msg.getAccountKeys().get(i)
+        // Both should work for signers (since they're always static), but getAccountKeys()
+        // is the proper API that handles all account resolution
+
+        // Current implementation checks staticAccountKeys directly
+        const signerFromStatic = msg.staticAccountKeys[0];
+        expect(signerFromStatic.equals(intendedKeypair.publicKey)).toBe(true);
+
+        // The recommended approach uses getAccountKeys() which resolves all keys
+        // This works when there are no lookup tables (or when they're resolved)
+        const accountKeys = msg.getAccountKeys();
+        const signerFromResolved = accountKeys.get(0);
+        expect(signerFromResolved?.equals(intendedKeypair.publicKey)).toBe(
+          true
+        );
+
+        // Current implementation should work, but demonstrates the issue:
+        // It doesn't use the recommended API (getAccountKeys())
+        // The issue is that if lookup tables are present, getAccountKeys() would require
+        // them to be resolved, but the current code bypasses this by only checking staticAccountKeys
+        expect(() => {
+          adapter.verifyTransactionSignedByIntentOwner(base64String);
+        }).not.toThrow();
+      });
+
+      test("should handle versioned transaction without explicit MessageV0 check (future message versions)", () => {
+        // This test demonstrates issue #1: the code only handles MessageV0 explicitly
+        // If other message versions exist in the future, they won't be handled.
+        // The code should work with any VersionedTransaction message type.
+
+        const intendedKeypair = Keypair.generate();
+        const code = "12345678";
+        const codeHashValue = codeHash(code);
+
+        // Create a MessageV0 transaction (current only version, but code should be future-proof)
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 1,
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 1, // MEMO_PROGRAM_ID
+            },
+            staticAccountKeys: [
+              intendedKeypair.publicKey, // 0: signer
+              MEMO_PROGRAM_ID, // 1: memo program
+            ],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [
+              {
+                programIdIndex: 1, // MEMO_PROGRAM_ID
+                accountKeyIndexes: [],
+                data: Buffer.from(
+                  `actioncodes:ver=2&id=${codeHashValue}&int=${intendedKeypair.publicKey.toString()}`
+                ),
+              },
+            ],
+            addressTableLookups: [],
+          })
+        );
+
+        versionedTx.sign([intendedKeypair]);
+
+        const base64String = Buffer.from(versionedTx.serialize()).toString(
+          "base64"
+        );
+
+        // Current code has: if (msg instanceof MessageV0)
+        // This works for now, but if MessageV1, MessageV2, etc. are added,
+        // they won't be handled. The code should work with any message type
+        // that has getAccountKeys() method.
+
+        // Verify it works with MessageV0
+        expect(() => {
+          adapter.verifyTransactionSignedByIntentOwner(base64String);
+        }).not.toThrow();
+
+        // Note: If future message versions are added, this test would need to be updated
+        // to test those versions, and the implementation should be updated to handle them.
+      });
+
+      test("should demonstrate issue: staticAccountKeys access vs getAccountKeys() API", () => {
+        // This test demonstrates the colleague's concern:
+        // The code uses msg.staticAccountKeys[i] directly instead of msg.getAccountKeys().get(i)
+        // While this works for signers (which are always static), using getAccountKeys()
+        // is the recommended Solana API that properly resolves all account keys.
+
+        const intendedKeypair = Keypair.generate();
+        const issuerKeypair = Keypair.generate();
+        const code = "12345678";
+        const codeHashValue = codeHash(code);
+
+        // Create a multi-signer transaction WITHOUT lookup tables
+        // (getAccountKeys() requires lookup tables to be resolved if present)
+        const programId = Keypair.generate().publicKey;
+
+        const versionedTx = new VersionedTransaction(
+          new MessageV0({
+            header: {
+              numRequiredSignatures: 2, // Both intended and issuer sign
+              numReadonlySignedAccounts: 0,
+              numReadonlyUnsignedAccounts: 1, // MEMO_PROGRAM_ID
+            },
+            staticAccountKeys: [
+              intendedKeypair.publicKey, // 0: first signer
+              issuerKeypair.publicKey, // 1: second signer
+              MEMO_PROGRAM_ID, // 2: memo program
+            ],
+            recentBlockhash: "11111111111111111111111111111111",
+            compiledInstructions: [
+              {
+                programIdIndex: 2, // MEMO_PROGRAM_ID
+                accountKeyIndexes: [],
+                data: Buffer.from(
+                  `actioncodes:ver=2&id=${codeHashValue}&int=${intendedKeypair.publicKey.toString()}&iss=${issuerKeypair.publicKey.toString()}`
+                ),
+              },
+            ],
+            addressTableLookups: [], // No lookup tables for this test
+          })
+        );
+
+        versionedTx.sign([intendedKeypair, issuerKeypair]);
+
+        const base64String = Buffer.from(versionedTx.serialize()).toString(
+          "base64"
+        );
+
+        // Verify using the recommended API (getAccountKeys)
+        const deserialized = VersionedTransaction.deserialize(
+          Buffer.from(base64String, "base64")
+        );
+        const msg = deserialized.message as MessageV0;
+        const accountKeys = msg.getAccountKeys();
+
+        // Both signers should be accessible via getAccountKeys()
+        expect(accountKeys.get(0)?.equals(intendedKeypair.publicKey)).toBe(
+          true
+        );
+        expect(accountKeys.get(1)?.equals(issuerKeypair.publicKey)).toBe(true);
+
+        // Current implementation uses staticAccountKeys directly
+        // This works but is not using the recommended API
+        expect(msg.staticAccountKeys[0].equals(intendedKeypair.publicKey)).toBe(
+          true
+        );
+        expect(msg.staticAccountKeys[1].equals(issuerKeypair.publicKey)).toBe(
+          true
+        );
+
+        // Current implementation should work
+        // The issue is that it doesn't use the recommended getAccountKeys() API
+        // which would be more robust and future-proof
+        expect(() => {
+          adapter.verifyTransactionSignedByIntentOwner(base64String);
+        }).not.toThrow();
+      });
+    });
+
     test("attachProtocolMeta adds meta to legacy transaction", async () => {
       const tx = new Transaction();
       tx.recentBlockhash = "11111111111111111111111111111111";

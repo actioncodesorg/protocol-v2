@@ -308,14 +308,8 @@ export class SolanaAdapter extends BaseChainAdapter {
         Buffer.from(txString, "base64")
       );
 
-      // Check if this is actually a versioned transaction by checking if it has a MessageV0
-      if (versionedTx.message instanceof MessageV0) {
-        return versionedTx;
-      } else {
-        // This is likely a legacy transaction that was incorrectly deserialized as versioned
-        // Fall back to legacy deserialization
-        return Transaction.from(Buffer.from(txString, "base64"));
-      }
+      // Return versioned transaction (works with any message version)
+      return versionedTx;
     } catch {
       try {
         // Fallback to legacy
@@ -342,32 +336,70 @@ export class SolanaAdapter extends BaseChainAdapter {
         ix.programId.equals(MEMO_PROGRAM_ID)
       );
     } else {
-      // VersionedTransaction: inspect `message.compiledInstructions` / static keys
+      // VersionedTransaction: inspect `message.compiledInstructions`
       const vtx = tx as VersionedTransaction;
       const msg = vtx.message;
-      if (msg instanceof MessageV0) {
-        const memos: TransactionInstruction[] = [];
-        for (const ix of msg.compiledInstructions) {
-          const pid = msg.staticAccountKeys[ix.programIdIndex];
-          if (pid && pid.equals(MEMO_PROGRAM_ID)) {
-            // reconstruct a TransactionInstruction for inspection
-            const keys = ix.accountKeyIndexes.map((i) => ({
-              pubkey: msg.staticAccountKeys[i]!,
-              isSigner: false,
-              isWritable: false,
-            }));
-            memos.push(
-              new TransactionInstruction({
-                keys,
-                programId: pid,
-                data: ix.data as Buffer,
-              })
-            );
-          }
-        }
-        return memos;
+      const memos: TransactionInstruction[] = [];
+
+      // Use getAccountKeys() API which properly resolves both static and lookup table keys
+      // This is the recommended Solana API for accessing account keys in versioned transactions
+      let accountKeys;
+      try {
+        // Try to get account keys - works if no lookup tables or if they're already resolved
+        accountKeys = msg.getAccountKeys();
+      } catch {
+        // If lookup tables need resolution but aren't available, fall back to staticAccountKeys
+        // Program IDs are always in staticAccountKeys, so this is safe for checking program IDs
+        accountKeys = null;
       }
-      return [];
+
+      // Program IDs are always in staticAccountKeys (Solana requirement)
+      // So we can safely access them from staticAccountKeys even if accountKeys isn't available
+      const staticKeys = (msg as MessageV0).staticAccountKeys;
+
+      for (const ix of msg.compiledInstructions) {
+        // Program ID is always in staticAccountKeys
+        const pid = staticKeys[ix.programIdIndex];
+        if (pid && pid.equals(MEMO_PROGRAM_ID)) {
+          // Reconstruct a TransactionInstruction for inspection
+          // For account keys, use getAccountKeys() if available, otherwise skip accounts from lookup tables
+          const keys = ix.accountKeyIndexes
+            .map((i) => {
+              if (accountKeys) {
+                // Use getAccountKeys() to properly resolve accounts from lookup tables
+                const key = accountKeys.get(i);
+                return key
+                  ? {
+                      pubkey: key,
+                      isSigner: false,
+                      isWritable: false,
+                    }
+                  : null;
+              } else {
+                // Fallback: only include accounts that are in staticAccountKeys
+                // Skip accounts from lookup tables (indices >= staticKeys.length)
+                if (i < staticKeys.length) {
+                  return {
+                    pubkey: staticKeys[i]!,
+                    isSigner: false,
+                    isWritable: false,
+                  };
+                }
+                return null;
+              }
+            })
+            .filter((k): k is NonNullable<typeof k> => k !== null);
+
+          memos.push(
+            new TransactionInstruction({
+              keys,
+              programId: pid,
+              data: ix.data as Buffer,
+            })
+          );
+        }
+      }
+      return memos;
     }
   }
 
@@ -485,39 +517,59 @@ export class SolanaAdapter extends BaseChainAdapter {
       return;
     }
 
-    // For VersionedTransaction (MessageV0)
+    // For VersionedTransaction
     if (tx instanceof VersionedTransaction) {
       const msg = tx.message;
-      if (msg instanceof MessageV0) {
-        let isSignedByIntended = false;
-        let isSignedByIssuer = false;
-        const signerCount = msg.header.numRequiredSignatures;
-        for (let i = 0; i < signerCount; i++) {
-          const key = msg.staticAccountKeys[i];
-          if (key) {
-            actualSigners.push(key.toString());
-            if (key.equals(intendedPubkey)) {
-              isSignedByIntended = true;
-            }
-            if (issuer && key.equals(issuerPubkey!)) {
-              isSignedByIssuer = true;
-            }
+      let isSignedByIntended = false;
+      let isSignedByIssuer = false;
+      const signerCount = msg.header.numRequiredSignatures;
+
+      // Use getAccountKeys() API which properly resolves both static and lookup table keys
+      // This is the recommended Solana API for accessing account keys in versioned transactions
+      // Note: getAccountKeys() requires lookup tables to be resolved if present, but since
+      // signers are always in staticAccountKeys (Solana requirement), we can safely access
+      // them via getAccountKeys() when lookup tables don't need resolution, or fall back
+      // to staticAccountKeys if lookup tables are present but not resolved.
+      let accountKeys;
+      try {
+        // Try to get account keys - works if no lookup tables or if they're already resolved
+        accountKeys = msg.getAccountKeys();
+      } catch {
+        // If lookup tables need resolution but aren't available, fall back to staticAccountKeys
+        // This is safe for signers since they're always in staticAccountKeys
+        accountKeys = null;
+      }
+
+      for (let i = 0; i < signerCount; i++) {
+        const key = accountKeys
+          ? accountKeys.get(i)
+          : (msg as MessageV0).staticAccountKeys[i];
+        if (key) {
+          actualSigners.push(key.toString());
+          if (key.equals(intendedPubkey)) {
+            isSignedByIntended = true;
+          }
+          if (issuer && key.equals(issuerPubkey!)) {
+            isSignedByIssuer = true;
           }
         }
-        if (!isSignedByIntended) {
-          throw ProtocolError.transactionNotSignedByIntendedOwner(
-            intended,
-            actualSigners
-          );
-        }
-        if (issuer && !isSignedByIssuer) {
-          throw ProtocolError.transactionNotSignedByIssuer(
-            issuer,
-            actualSigners
-          );
-        }
-        return;
       }
+
+      if (!isSignedByIntended) {
+        throw ProtocolError.transactionNotSignedByIntendedOwner(
+          intended,
+          actualSigners
+        );
+      }
+
+      if (issuer && !isSignedByIssuer) {
+        throw ProtocolError.transactionNotSignedByIssuer(
+          issuer,
+          actualSigners
+        );
+      }
+
+      return;
     }
 
     throw ProtocolError.invalidTransactionFormat(
