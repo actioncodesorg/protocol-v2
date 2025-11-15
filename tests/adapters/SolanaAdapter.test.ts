@@ -4,6 +4,10 @@ import {
   VersionedTransaction,
   MessageV0,
   PublicKey,
+  TransactionMessage,
+  type TransactionResponse,
+  type VersionedTransactionResponse,
+  type ParsedTransactionWithMeta,
 } from "@solana/web3.js";
 import { MEMO_PROGRAM_ID } from "@solana/spl-memo";
 import bs58 from "bs58";
@@ -398,6 +402,463 @@ describe("SolanaAdapter", () => {
       ).toString("base64");
       const result = adapter.parseMeta(base64String);
       expect(result).toBe(null);
+    });
+
+    describe("getTransaction response support", () => {
+      test("getProtocolMeta extracts meta from TransactionResponse (legacy)", () => {
+        const code = "12345678";
+        const codeHashValue = codeHash(code);
+        const instruction = SolanaAdapter.createProtocolMetaIx({
+          ver: 2,
+          id: codeHashValue,
+          int: "user@example.com",
+          p: { amount: 100 },
+        });
+        const tx = new Transaction().add(instruction);
+        tx.recentBlockhash = "11111111111111111111111111111111";
+        tx.feePayer = keypair.publicKey;
+
+        // Create a TransactionResponse-like object
+        const txResponse: TransactionResponse = {
+          slot: 12345,
+          transaction: {
+            message: tx.compileMessage(),
+            signatures: [bs58.encode(new Uint8Array(64))],
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        const result = adapter.getProtocolMeta(txResponse);
+        expect(result).toContain("actioncodes:ver=2");
+        expect(result).toContain(`id=${codeHashValue}`);
+        expect(result).toContain("int=user%40example.com");
+        expect(result).toContain("p=%7B%22amount%22%3A100%7D");
+      });
+
+      test("getProtocolMeta extracts meta from VersionedTransactionResponse", () => {
+        const code = "87654321";
+        const codeHashValue = codeHash(code);
+        const instruction = SolanaAdapter.createProtocolMetaIx({
+          ver: 2,
+          id: codeHashValue,
+          int: "wallet:solana",
+        });
+
+        // Create a versioned transaction message using MessageV0.compile
+        const messageV0 = MessageV0.compile({
+          payerKey: keypair.publicKey,
+          instructions: [instruction],
+          recentBlockhash: "11111111111111111111111111111111",
+        });
+
+        // Create a VersionedTransactionResponse-like object
+        const txResponse: VersionedTransactionResponse = {
+          slot: 12346,
+          transaction: {
+            message: messageV0,
+            signatures: [bs58.encode(new Uint8Array(64))],
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+          version: 0,
+        };
+
+        const result = adapter.getProtocolMeta(txResponse);
+        expect(result).toContain("actioncodes:ver=2");
+        expect(result).toContain(`id=${codeHashValue}`);
+        expect(result).toContain("int=wallet%3Asolana");
+      });
+
+      test("getProtocolMeta extracts meta from ParsedTransactionWithMeta", () => {
+        const code = "11223344";
+        const codeHashValue = codeHash(code);
+        const metaString = `actioncodes:ver=2&id=${codeHashValue}&int=parsed%40user.com&p=%7B%22test%22%3Atrue%7D`;
+
+        // Create a ParsedTransactionWithMeta-like object
+        const parsedTx: ParsedTransactionWithMeta = {
+          slot: 12347,
+          transaction: {
+            signatures: [bs58.encode(new Uint8Array(64))],
+            message: {
+              accountKeys: [
+                {
+                  pubkey: keypair.publicKey,
+                  signer: true,
+                  writable: true,
+                },
+              ],
+              instructions: [
+                {
+                  program: "spl-memo",
+                  programId: MEMO_PROGRAM_ID,
+                  parsed: metaString,
+                },
+              ],
+              recentBlockhash: "11111111111111111111111111111111",
+            },
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        const result = adapter.getProtocolMeta(parsedTx);
+        expect(result).toBe(metaString);
+        expect(result).toContain("actioncodes:ver=2");
+        expect(result).toContain(`id=${codeHashValue}`);
+        expect(result).toContain("int=parsed%40user.com");
+      });
+
+      test("getProtocolMeta handles PartiallyDecodedInstruction in ParsedTransactionWithMeta", () => {
+        const code = "55667788";
+        const codeHashValue = codeHash(code);
+        const metaString = `actioncodes:ver=2&id=${codeHashValue}&int=partial%40user.com`;
+        const metaBytes = new TextEncoder().encode(metaString);
+
+        // Create a ParsedTransactionWithMeta with PartiallyDecodedInstruction
+        const parsedTx: ParsedTransactionWithMeta = {
+          slot: 12348,
+          transaction: {
+            signatures: [bs58.encode(new Uint8Array(64))],
+            message: {
+              accountKeys: [
+                {
+                  pubkey: keypair.publicKey,
+                  signer: true,
+                  writable: true,
+                },
+              ],
+              instructions: [
+                {
+                  programId: MEMO_PROGRAM_ID,
+                  accounts: [],
+                  data: bs58.encode(metaBytes),
+                },
+              ],
+              recentBlockhash: "11111111111111111111111111111111",
+            },
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        const result = adapter.getProtocolMeta(parsedTx);
+        expect(result).toBe(metaString);
+        expect(result).toContain("actioncodes:ver=2");
+        expect(result).toContain(`id=${codeHashValue}`);
+      });
+
+      test("getProtocolMeta returns null for transaction response without memo", () => {
+        const tx = new Transaction();
+        tx.recentBlockhash = "11111111111111111111111111111111";
+        tx.feePayer = keypair.publicKey;
+
+        const txResponse: TransactionResponse = {
+          slot: 12349,
+          transaction: {
+            message: tx.compileMessage(),
+            signatures: [bs58.encode(new Uint8Array(64))],
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        const result = adapter.getProtocolMeta(txResponse);
+        expect(result).toBe(null);
+      });
+
+      test("parseMeta extracts and parses meta from TransactionResponse", () => {
+        const code = "99887766";
+        const codeHashValue = codeHash(code);
+        const instruction = SolanaAdapter.createProtocolMetaIx({
+          ver: 2,
+          id: codeHashValue,
+          int: "parse@test.com",
+          p: { value: 42 },
+        });
+        const tx = new Transaction().add(instruction);
+        tx.recentBlockhash = "11111111111111111111111111111111";
+        tx.feePayer = keypair.publicKey;
+
+        const txResponse: TransactionResponse = {
+          slot: 12350,
+          transaction: {
+            message: tx.compileMessage(),
+            signatures: [bs58.encode(new Uint8Array(64))],
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        const result = adapter.parseMeta(txResponse);
+        expect(result).toEqual({
+          ver: 2,
+          id: codeHashValue,
+          int: "parse@test.com",
+          p: { value: 42 },
+        });
+      });
+
+      test("parseMeta extracts and parses meta from VersionedTransactionResponse", () => {
+        const code = "44332211";
+        const codeHashValue = codeHash(code);
+        const instruction = SolanaAdapter.createProtocolMetaIx({
+          ver: 2,
+          id: codeHashValue,
+          int: "versioned@test.com",
+        });
+
+        const messageV0 = MessageV0.compile({
+          payerKey: keypair.publicKey,
+          instructions: [instruction],
+          recentBlockhash: "11111111111111111111111111111111",
+        });
+
+        const txResponse: VersionedTransactionResponse = {
+          slot: 12351,
+          transaction: {
+            message: messageV0,
+            signatures: [bs58.encode(new Uint8Array(64))],
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+          version: 0,
+        };
+
+        const result = adapter.parseMeta(txResponse);
+        expect(result).toEqual({
+          ver: 2,
+          id: codeHashValue,
+          int: "versioned@test.com",
+        });
+      });
+
+      test("parseMeta extracts and parses meta from ParsedTransactionWithMeta", () => {
+        const code = "13579246";
+        const codeHashValue = codeHash(code);
+        const metaString = `actioncodes:ver=2&id=${codeHashValue}&int=parsed%40meta.com&p=%7B%22key%22%3A%22value%22%7D`;
+
+        const parsedTx: ParsedTransactionWithMeta = {
+          slot: 12352,
+          transaction: {
+            signatures: [bs58.encode(new Uint8Array(64))],
+            message: {
+              accountKeys: [
+                {
+                  pubkey: keypair.publicKey,
+                  signer: true,
+                  writable: true,
+                },
+              ],
+              instructions: [
+                {
+                  program: "spl-memo",
+                  programId: MEMO_PROGRAM_ID,
+                  parsed: metaString,
+                },
+              ],
+              recentBlockhash: "11111111111111111111111111111111",
+            },
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        const result = adapter.parseMeta(parsedTx);
+        expect(result).toEqual({
+          ver: 2,
+          id: codeHashValue,
+          int: "parsed@meta.com",
+          p: { key: "value" },
+        });
+      });
+
+      test("getProtocolMeta extracts meta from real-world VersionedTransactionResponse with address table lookups", () => {
+        // Real-world transaction response from solana.getTransaction()
+        // This transaction has address table lookups and a memo instruction
+        // Construct MessageV0 from the real-world data
+        const staticAccountKeys = [
+          new PublicKey("BZjoH5JYYkDsSgVRVdMHnbYWSHDgnUTY5vZ84bGeSHMQ"),
+          new PublicKey("7NePfmhUDY8gmxbuRMdmVQW7osnA7R6opzQSP9swry8G"),
+          new PublicKey("55ac9dtmtCjXHNabJ5RHG7xPjosr6dV4z8CY4Z72ErAq"),
+          new PublicKey("4DGSAbBMK3jhzV3miM1zqczEbTJqPeyaA1tGBacqvUKB"),
+          new PublicKey("4ZKwU7y7FNL1JdXbpn26zzi5r9kZ6RJJ8x5ubqSxXUQa"),
+          new PublicKey("FyAc9Ae5vmrwqNt6eE8xWJyhSTQTqYegeu48mTb8Q738"),
+          new PublicKey("BaNf1cCqmanGaBwM8MDVzzzWi2vUMJowKLFCnh4g7w6M"),
+          new PublicKey("964jM47gn4CMWKmX4ZC7PxKc6YWaD9WJGYSdQaSLMwYa"),
+          new PublicKey("ComputeBudget111111111111111111111111111111"),
+          new PublicKey("VauLTjjEQWFGhGffqmb8U8GXwa3QFs6roP4YXEq3npt"),
+          new PublicKey("B8i4N82rAkQYqZ75BKAm6NFD3oe15UKWC7mFTr6UKE2j"),
+          new PublicKey("MashGQTqcKDZAMevJKST9RYqJTL2Ae9NpcSuCE9WYqK"),
+          new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), // Memo program at index 12
+        ];
+
+        const messageV0 = new MessageV0({
+          header: {
+            numReadonlySignedAccounts: 0,
+            numReadonlyUnsignedAccounts: 5,
+            numRequiredSignatures: 1,
+          },
+          staticAccountKeys,
+          recentBlockhash: "8bQtc8gzXe6rVecnMY4WJ9pfutqkhXUUMYcm9ULSsnam",
+          compiledInstructions: [
+            {
+              programIdIndex: 8,
+              accountKeyIndexes: [],
+              data: Buffer.from(bs58.decode("HMypLP")),
+            },
+            {
+              programIdIndex: 8,
+              accountKeyIndexes: [],
+              data: Buffer.from(bs58.decode("3QCwqmHZ4mdq")),
+            },
+            {
+              programIdIndex: 9,
+              accountKeyIndexes: [1, 2, 0, 3, 4, 13, 10, 5, 6, 11, 14, 7, 13],
+              data: Buffer.from(bs58.decode("WuE7HjnsyebGPYvH8uzbd9")),
+            },
+            {
+              programIdIndex: 12, // Memo program index
+              accountKeyIndexes: [],
+              data: Buffer.from(
+                bs58.decode(
+                  "NuSsJjYmWkiyqYntFP2tLb3eRxjDSjbGPYTJkcZgRtLRDRCA8t1zvPYgPJUE4ksSgvjms2NHU6kSar22we2h1R1RKnoKPXPS67gZBffmAFGSS1Z866ndeqQwjaYdK2w99Jt4PekeRbT5PYxJdFi5fRigWb9yjferzHg417421vNeKxWhhuBQHiG"
+                )
+              ),
+            },
+          ],
+          addressTableLookups: [
+            {
+              accountKey: new PublicKey(
+                "GsZBMkswJKBBdemC7mXmRiMgbaYMmyMShP9s1uHremLR"
+              ),
+              readonlyIndexes: [],
+              writableIndexes: [0],
+            },
+            {
+              accountKey: new PublicKey(
+                "FaMS3U4uBojvGn5FSDEPimddcXsCfwkKsFgMVVnDdxGb"
+              ),
+              readonlyIndexes: [141],
+              writableIndexes: [],
+            },
+          ],
+        });
+
+        const realWorldTxResponse: VersionedTransactionResponse = {
+          slot: 421780256,
+          transaction: {
+            message: messageV0,
+            signatures: [
+              "3yJ8Yuoocb2nR3wGENuL5oek6JhfasV31vtcVsuBgJzde3vdVdzD7M1eRSqRCRvTzdyt2aARWjyHxFN9PXXy5PaM",
+            ],
+          },
+          meta: null,
+          blockTime: 1763230809,
+          version: 0,
+        };
+
+        // The expected memo string from the transaction logs
+        const expectedMetaString =
+          "actioncodes:ver=2&id=4751c56de3a6f26cc4064bdd178a7e20e012b66956d85935311f89cef3210fbc&int=BZjoH5JYYkDsSgVRVdMHnbYWSHDgnUTY5vZ84bGeSHMQ";
+
+        const result = adapter.getProtocolMeta(realWorldTxResponse);
+        expect(result).toBe(expectedMetaString);
+        expect(result).toContain("actioncodes:ver=2");
+        expect(result).toContain("id=4751c56de3a6f26cc4064bdd178a7e20e012b66956d85935311f89cef3210fbc");
+        expect(result).toContain("int=BZjoH5JYYkDsSgVRVdMHnbYWSHDgnUTY5vZ84bGeSHMQ");
+      });
+
+      test("parseMeta extracts and parses meta from real-world VersionedTransactionResponse", () => {
+        // Real-world transaction response - same structure as above
+        const staticAccountKeys = [
+          new PublicKey("BZjoH5JYYkDsSgVRVdMHnbYWSHDgnUTY5vZ84bGeSHMQ"),
+          new PublicKey("7NePfmhUDY8gmxbuRMdmVQW7osnA7R6opzQSP9swry8G"),
+          new PublicKey("55ac9dtmtCjXHNabJ5RHG7xPjosr6dV4z8CY4Z72ErAq"),
+          new PublicKey("4DGSAbBMK3jhzV3miM1zqczEbTJqPeyaA1tGBacqvUKB"),
+          new PublicKey("4ZKwU7y7FNL1JdXbpn26zzi5r9kZ6RJJ8x5ubqSxXUQa"),
+          new PublicKey("FyAc9Ae5vmrwqNt6eE8xWJyhSTQTqYegeu48mTb8Q738"),
+          new PublicKey("BaNf1cCqmanGaBwM8MDVzzzWi2vUMJowKLFCnh4g7w6M"),
+          new PublicKey("964jM47gn4CMWKmX4ZC7PxKc6YWaD9WJGYSdQaSLMwYa"),
+          new PublicKey("ComputeBudget111111111111111111111111111111"),
+          new PublicKey("VauLTjjEQWFGhGffqmb8U8GXwa3QFs6roP4YXEq3npt"),
+          new PublicKey("B8i4N82rAkQYqZ75BKAm6NFD3oe15UKWC7mFTr6UKE2j"),
+          new PublicKey("MashGQTqcKDZAMevJKST9RYqJTL2Ae9NpcSuCE9WYqK"),
+          new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), // Memo program at index 12
+        ];
+
+        const messageV0 = new MessageV0({
+          header: {
+            numReadonlySignedAccounts: 0,
+            numReadonlyUnsignedAccounts: 5,
+            numRequiredSignatures: 1,
+          },
+          staticAccountKeys,
+          recentBlockhash: "8bQtc8gzXe6rVecnMY4WJ9pfutqkhXUUMYcm9ULSsnam",
+          compiledInstructions: [
+            {
+              programIdIndex: 8,
+              accountKeyIndexes: [],
+              data: Buffer.from(bs58.decode("HMypLP")),
+            },
+            {
+              programIdIndex: 8,
+              accountKeyIndexes: [],
+              data: Buffer.from(bs58.decode("3QCwqmHZ4mdq")),
+            },
+            {
+              programIdIndex: 9,
+              accountKeyIndexes: [1, 2, 0, 3, 4, 13, 10, 5, 6, 11, 14, 7, 13],
+              data: Buffer.from(bs58.decode("WuE7HjnsyebGPYvH8uzbd9")),
+            },
+            {
+              programIdIndex: 12, // Memo program index
+              accountKeyIndexes: [],
+              data: Buffer.from(
+                bs58.decode(
+                  "NuSsJjYmWkiyqYntFP2tLb3eRxjDSjbGPYTJkcZgRtLRDRCA8t1zvPYgPJUE4ksSgvjms2NHU6kSar22we2h1R1RKnoKPXPS67gZBffmAFGSS1Z866ndeqQwjaYdK2w99Jt4PekeRbT5PYxJdFi5fRigWb9yjferzHg417421vNeKxWhhuBQHiG"
+                )
+              ),
+            },
+          ],
+          addressTableLookups: [
+            {
+              accountKey: new PublicKey(
+                "GsZBMkswJKBBdemC7mXmRiMgbaYMmyMShP9s1uHremLR"
+              ),
+              readonlyIndexes: [],
+              writableIndexes: [0],
+            },
+            {
+              accountKey: new PublicKey(
+                "FaMS3U4uBojvGn5FSDEPimddcXsCfwkKsFgMVVnDdxGb"
+              ),
+              readonlyIndexes: [141],
+              writableIndexes: [],
+            },
+          ],
+        });
+
+        const realWorldTxResponse: VersionedTransactionResponse = {
+          slot: 421780256,
+          transaction: {
+            message: messageV0,
+            signatures: [
+              "3yJ8Yuoocb2nR3wGENuL5oek6JhfasV31vtcVsuBgJzde3vdVdzD7M1eRSqRCRvTzdyt2aARWjyHxFN9PXXy5PaM",
+            ],
+          },
+          meta: null,
+          blockTime: 1763230809,
+          version: 0,
+        };
+
+        const result = adapter.parseMeta(realWorldTxResponse);
+        expect(result).toEqual({
+          ver: 2,
+          id: "4751c56de3a6f26cc4064bdd178a7e20e012b66956d85935311f89cef3210fbc",
+          int: "BZjoH5JYYkDsSgVRVdMHnbYWSHDgnUTY5vZ84bGeSHMQ",
+        });
+      });
     });
 
     test("verifyTransactionMatchesCode validates action code against transaction meta", () => {

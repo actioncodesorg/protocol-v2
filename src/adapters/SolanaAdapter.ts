@@ -9,6 +9,11 @@ import {
   Connection,
   TransactionMessage,
   AddressLookupTableAccount,
+  type TransactionResponse,
+  type VersionedTransactionResponse,
+  type ParsedTransactionWithMeta,
+  Message,
+  type VersionedMessage,
 } from "@solana/web3.js";
 import { createMemoInstruction, MEMO_PROGRAM_ID } from "@solana/spl-memo";
 import { BaseChainAdapter } from "./BaseChainAdapter";
@@ -279,21 +284,166 @@ export class SolanaAdapter extends BaseChainAdapter {
     return createMemoInstruction(metaString);
   }
 
-  /** Extract protocol metadata string (memo) from a base64-encoded transaction, or null */
-  getProtocolMeta(txString: string): string | null {
+  /**
+   * Extract protocol metadata string (memo) from a base64-encoded transaction, or null
+   * @overload
+   */
+  getProtocolMeta(txString: string): string | null;
+  /**
+   * Extract protocol metadata string (memo) from a transaction response from solana.getTransaction(), or null
+   * @overload
+   */
+  getProtocolMeta(
+    txResponse:
+      | TransactionResponse
+      | VersionedTransactionResponse
+      | ParsedTransactionWithMeta
+  ): string | null;
+  getProtocolMeta(
+    input:
+      | string
+      | TransactionResponse
+      | VersionedTransactionResponse
+      | ParsedTransactionWithMeta
+  ): string | null {
     try {
-      const tx = this.deserializeTransaction(txString);
-      for (const ix of this.getMemoInstructions(tx)) {
-        const data = ix.data;
+      // Handle base64 string (existing functionality)
+      if (typeof input === "string") {
+        const tx = this.deserializeTransaction(input);
+        for (const ix of this.getMemoInstructions(tx)) {
+          const data = ix.data;
+          try {
+            const s = new TextDecoder().decode(data);
+            // Optionally: test parse
+            const parsed = parseProtocolMeta(s);
+            if (parsed) return s;
+          } catch {
+            // ignore
+          }
+        }
+        return null;
+      }
+
+      // Handle transaction response objects
+      // Check if it's a parsed transaction
+      if ("transaction" in input && "message" in input.transaction) {
+        const msg = input.transaction.message;
+
+        // Handle ParsedTransactionWithMeta
+        if (
+          "instructions" in msg &&
+          Array.isArray(msg.instructions) &&
+          msg.instructions.length > 0 &&
+          ("program" in msg.instructions[0]! ||
+            "programId" in msg.instructions[0]!)
+        ) {
+          // This is a ParsedMessage with parsed instructions
+          for (const ix of msg.instructions) {
+            // Check if it's a memo instruction
+            if (
+              ("program" in ix && ix.program === "spl-memo") ||
+              ("programId" in ix &&
+                ix.programId instanceof PublicKey &&
+                ix.programId.equals(MEMO_PROGRAM_ID))
+            ) {
+              let memoString: string | null = null;
+
+              // For parsed instructions, the memo is in the `parsed` field
+              if ("parsed" in ix && typeof ix.parsed === "string") {
+                memoString = ix.parsed;
+              } else if ("data" in ix && typeof ix.data === "string") {
+                // For partially decoded instructions, decode base58 data
+                try {
+                  const dataBytes = bs58.decode(ix.data);
+                  memoString = new TextDecoder().decode(dataBytes);
+                } catch {
+                  continue;
+                }
+              }
+
+              if (memoString) {
+                try {
+                  // Test parse to ensure it's valid protocol meta
+                  const parsed = parseProtocolMeta(memoString);
+                  if (parsed) return memoString;
+                } catch {
+                  // ignore
+                }
+              }
+            }
+          }
+          return null;
+        }
+
+        // Handle non-parsed TransactionResponse or VersionedTransactionResponse
+        // Work with compiled instructions directly from Message or MessageV0
         try {
-          const s = new TextDecoder().decode(data);
-          // Optionally: test parse
-          const parsed = parseProtocolMeta(s);
-          if (parsed) return s;
+          // Check if it's a MessageV0 (versioned)
+          if (msg instanceof MessageV0) {
+            const v0Msg = msg;
+            const staticKeys = v0Msg.staticAccountKeys;
+            for (const compiledIx of v0Msg.compiledInstructions) {
+              const pid = staticKeys[compiledIx.programIdIndex];
+              if (pid && pid.equals(MEMO_PROGRAM_ID)) {
+                try {
+                  const data = Buffer.from(compiledIx.data);
+                  const s = new TextDecoder().decode(data);
+                  const parsed = parseProtocolMeta(s);
+                  if (parsed) return s;
+                } catch {
+                  // ignore
+                }
+              }
+            }
+            return null;
+          }
+
+          // Check if it's a legacy Message
+          if (msg instanceof Message || ("version" in msg && msg.version === "legacy")) {
+            const legacyMsg = msg as Message;
+            const accountKeys = legacyMsg.accountKeys;
+            // Message has compiledInstructions getter
+            for (const compiledIx of legacyMsg.compiledInstructions) {
+              const pid = accountKeys[compiledIx.programIdIndex];
+              if (pid && pid.equals(MEMO_PROGRAM_ID)) {
+                try {
+                  const data = Buffer.from(compiledIx.data);
+                  const s = new TextDecoder().decode(data);
+                  const parsed = parseProtocolMeta(s);
+                  if (parsed) return s;
+                } catch {
+                  // ignore
+                }
+              }
+            }
+            return null;
+          }
+
+          // Try to decompile as VersionedMessage (fallback)
+          try {
+            const decompiled = TransactionMessage.decompile(
+              msg as unknown as VersionedMessage
+            );
+            for (const ix of decompiled.instructions) {
+              if (ix.programId.equals(MEMO_PROGRAM_ID)) {
+                try {
+                  const s = new TextDecoder().decode(ix.data);
+                  const parsed = parseProtocolMeta(s);
+                  if (parsed) return s;
+                } catch {
+                  // ignore
+                }
+              }
+            }
+          } catch {
+            // ignore
+          }
         } catch {
           // ignore
         }
+        return null;
       }
+
       return null;
     } catch {
       return null;
@@ -322,9 +472,32 @@ export class SolanaAdapter extends BaseChainAdapter {
     }
   }
 
-  /** Get parsed ProtocolMeta object from base64-encoded transaction, or null if none or invalid */
-  parseMeta(txString: string): ProtocolMetaFields | null {
-    const s = this.getProtocolMeta(txString);
+  /**
+   * Get parsed ProtocolMeta object from base64-encoded transaction, or null if none or invalid
+   * @overload
+   */
+  parseMeta(txString: string): ProtocolMetaFields | null;
+  /**
+   * Get parsed ProtocolMeta object from transaction response from solana.getTransaction(), or null if none or invalid
+   * @overload
+   */
+  parseMeta(
+    txResponse:
+      | TransactionResponse
+      | VersionedTransactionResponse
+      | ParsedTransactionWithMeta
+  ): ProtocolMetaFields | null;
+  parseMeta(
+    input:
+      | string
+      | TransactionResponse
+      | VersionedTransactionResponse
+      | ParsedTransactionWithMeta
+  ): ProtocolMetaFields | null {
+    const s =
+      typeof input === "string"
+        ? this.getProtocolMeta(input)
+        : this.getProtocolMeta(input);
     if (!s) return null;
     return parseProtocolMeta(s);
   }
