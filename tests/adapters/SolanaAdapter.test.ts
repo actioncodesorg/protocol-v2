@@ -859,6 +859,288 @@ describe("SolanaAdapter", () => {
           int: "BZjoH5JYYkDsSgVRVdMHnbYWSHDgnUTY5vZ84bGeSHMQ",
         });
       });
+
+      test("verifyTransactionMatchesCode validates action code against TransactionResponse", () => {
+        const signerKeypair = Keypair.generate();
+        const actionCode: ActionCode = {
+          code: "99887766",
+          pubkey: signerKeypair.publicKey.toString(),
+          timestamp: Date.now(),
+          expiresAt: Date.now() + 120000,
+          signature: "test-signature",
+          chain: "solana",
+        };
+
+        const codeHashValue = codeHash(actionCode.code);
+        const instruction = SolanaAdapter.createProtocolMetaIx({
+          ver: 2,
+          id: codeHashValue,
+          int: signerKeypair.publicKey.toString(),
+        });
+        const tx = new Transaction().add(instruction);
+        tx.recentBlockhash = "11111111111111111111111111111111";
+        tx.feePayer = keypair.publicKey;
+
+        const txResponse: TransactionResponse = {
+          slot: 12360,
+          transaction: {
+            message: tx.compileMessage(),
+            signatures: [bs58.encode(new Uint8Array(64))],
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        expect(() => {
+          adapter.verifyTransactionMatchesCode(actionCode, txResponse);
+        }).not.toThrow();
+      });
+
+      test("verifyTransactionMatchesCode validates action code against VersionedTransactionResponse", () => {
+        const actionCode: ActionCode = {
+          code: "44332211",
+          pubkey: "versioned@verify.com",
+          timestamp: Date.now(),
+          expiresAt: Date.now() + 120000,
+          signature: "test-signature",
+          chain: "solana",
+        };
+
+        const codeHashValue = codeHash(actionCode.code);
+        const instruction = SolanaAdapter.createProtocolMetaIx({
+          ver: 2,
+          id: codeHashValue,
+          int: "versioned@verify.com",
+        });
+
+        const messageV0 = MessageV0.compile({
+          payerKey: keypair.publicKey,
+          instructions: [instruction],
+          recentBlockhash: "11111111111111111111111111111111",
+        });
+
+        const txResponse: VersionedTransactionResponse = {
+          slot: 12361,
+          transaction: {
+            message: messageV0,
+            signatures: [bs58.encode(new Uint8Array(64))],
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+          version: 0,
+        };
+
+        expect(() => {
+          adapter.verifyTransactionMatchesCode(actionCode, txResponse);
+        }).not.toThrow();
+      });
+
+      test("verifyTransactionMatchesCode throws when meta doesn't match in TransactionResponse", () => {
+        const actionCode: ActionCode = {
+          code: "11223344",
+          pubkey: "mismatch@test.com",
+          timestamp: Date.now(),
+          expiresAt: Date.now() + 120000,
+          signature: "test-signature",
+          chain: "solana",
+        };
+
+        const wrongCodeHash = codeHash("wrong-code");
+        const instruction = SolanaAdapter.createProtocolMetaIx({
+          ver: 2,
+          id: wrongCodeHash, // Wrong code hash
+          int: "mismatch@test.com",
+        });
+        const tx = new Transaction().add(instruction);
+        tx.recentBlockhash = "11111111111111111111111111111111";
+        tx.feePayer = keypair.publicKey;
+
+        const txResponse: TransactionResponse = {
+          slot: 12362,
+          transaction: {
+            message: tx.compileMessage(),
+            signatures: [bs58.encode(new Uint8Array(64))],
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        expect(() => {
+          adapter.verifyTransactionMatchesCode(actionCode, txResponse);
+        }).toThrow();
+      });
+
+      test("verifyTransactionSignedByIntentOwner verifies TransactionResponse signed by intended owner", () => {
+        const signerKeypair = Keypair.generate();
+        const code = "55667788";
+        const codeHashValue = codeHash(code);
+        const instruction = SolanaAdapter.createProtocolMetaIx({
+          ver: 2,
+          id: codeHashValue,
+          int: signerKeypair.publicKey.toString(),
+        });
+        const tx = new Transaction().add(instruction);
+        tx.recentBlockhash = "11111111111111111111111111111111";
+        tx.feePayer = signerKeypair.publicKey;
+        tx.sign(signerKeypair);
+
+        const txResponse: TransactionResponse = {
+          slot: 12363,
+          transaction: {
+            message: tx.compileMessage(),
+            signatures: tx.signatures.map((sig) => bs58.encode(sig.signature || new Uint8Array(64))),
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        expect(() => {
+          adapter.verifyTransactionSignedByIntentOwner(txResponse);
+        }).not.toThrow();
+      });
+
+      test("verifyTransactionSignedByIntentOwner verifies VersionedTransactionResponse signed by intended owner", () => {
+        const signerKeypair = Keypair.generate();
+        const code = "11223399";
+        const codeHashValue = codeHash(code);
+        const instruction = SolanaAdapter.createProtocolMetaIx({
+          ver: 2,
+          id: codeHashValue,
+          int: signerKeypair.publicKey.toString(),
+        });
+
+        const messageV0 = MessageV0.compile({
+          payerKey: signerKeypair.publicKey,
+          instructions: [instruction],
+          recentBlockhash: "11111111111111111111111111111111",
+        });
+
+        const versionedTx = new VersionedTransaction(messageV0);
+        versionedTx.sign([signerKeypair]);
+
+        const txResponse: VersionedTransactionResponse = {
+          slot: 12364,
+          transaction: {
+            message: messageV0,
+            signatures: versionedTx.signatures.map((sig) => bs58.encode(sig)),
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+          version: 0,
+        };
+
+        expect(() => {
+          adapter.verifyTransactionSignedByIntentOwner(txResponse);
+        }).not.toThrow();
+      });
+
+      test("verifyTransactionSignedByIntentOwner verifies ParsedTransactionWithMeta signed by intended owner", () => {
+        const signerKeypair = Keypair.generate();
+        const code = "88776655";
+        const codeHashValue = codeHash(code);
+        const metaString = `actioncodes:ver=2&id=${codeHashValue}&int=${signerKeypair.publicKey.toString()}`;
+
+        const parsedTx: ParsedTransactionWithMeta = {
+          slot: 12365,
+          transaction: {
+            signatures: [bs58.encode(new Uint8Array(64))],
+            message: {
+              accountKeys: [
+                {
+                  pubkey: signerKeypair.publicKey,
+                  signer: true,
+                  writable: true,
+                },
+              ],
+              instructions: [
+                {
+                  program: "spl-memo",
+                  programId: MEMO_PROGRAM_ID,
+                  parsed: metaString,
+                },
+              ],
+              recentBlockhash: "11111111111111111111111111111111",
+            },
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        expect(() => {
+          adapter.verifyTransactionSignedByIntentOwner(parsedTx);
+        }).not.toThrow();
+      });
+
+      test("verifyTransactionSignedByIntentOwner throws when TransactionResponse not signed by intended owner", () => {
+        const signerKeypair = Keypair.generate();
+        const wrongSignerKeypair = Keypair.generate();
+        const code = "33445566";
+        const codeHashValue = codeHash(code);
+        const instruction = SolanaAdapter.createProtocolMetaIx({
+          ver: 2,
+          id: codeHashValue,
+          int: signerKeypair.publicKey.toString(), // Intended signer
+        });
+        const tx = new Transaction().add(instruction);
+        tx.recentBlockhash = "11111111111111111111111111111111";
+        tx.feePayer = wrongSignerKeypair.publicKey; // Wrong signer
+        tx.sign(wrongSignerKeypair);
+
+        const txResponse: TransactionResponse = {
+          slot: 12366,
+          transaction: {
+            message: tx.compileMessage(),
+            signatures: tx.signatures.map((sig) => bs58.encode(sig.signature || new Uint8Array(64))),
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        expect(() => {
+          adapter.verifyTransactionSignedByIntentOwner(txResponse);
+        }).toThrow();
+      });
+
+      test("verifyTransactionSignedByIntentOwner verifies with both int and iss in TransactionResponse", () => {
+        const intKeypair = Keypair.generate();
+        const issKeypair = Keypair.generate();
+        const code = "77889900";
+        const codeHashValue = codeHash(code);
+        const instruction = SolanaAdapter.createProtocolMetaIx({
+          ver: 2,
+          id: codeHashValue,
+          int: intKeypair.publicKey.toString(),
+          iss: issKeypair.publicKey.toString(),
+        });
+        
+        // Add issuer as a signer to the instruction's keys so it's included in account keys
+        instruction.keys.push({
+          pubkey: issKeypair.publicKey,
+          isSigner: true,
+          isWritable: false,
+        });
+        
+        const tx = new Transaction().add(instruction);
+        tx.recentBlockhash = "11111111111111111111111111111111";
+        tx.feePayer = intKeypair.publicKey;
+        
+        // Now both signers are in account keys, so we can sign with both
+        tx.sign(intKeypair, issKeypair);
+
+        const txResponse: TransactionResponse = {
+          slot: 12367,
+          transaction: {
+            message: tx.compileMessage(),
+            signatures: tx.signatures.map((sig) => bs58.encode(sig.signature || new Uint8Array(64))),
+          },
+          meta: null,
+          blockTime: Date.now() / 1000,
+        };
+
+        expect(() => {
+          adapter.verifyTransactionSignedByIntentOwner(txResponse);
+        }).not.toThrow();
+      });
     });
 
     test("verifyTransactionMatchesCode validates action code against transaction meta", () => {

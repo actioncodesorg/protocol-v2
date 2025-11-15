@@ -579,8 +579,29 @@ export class SolanaAdapter extends BaseChainAdapter {
   /**
    * Validate that a base64-encoded transaction's memo meta aligns with the bound `actionCode`.
    * Throws ProtocolError if validation fails.
+   * @overload
    */
-  verifyTransactionMatchesCode(actionCode: ActionCode, txString: string): void {
+  verifyTransactionMatchesCode(actionCode: ActionCode, txString: string): void;
+  /**
+   * Validate that a transaction response from solana.getTransaction() memo meta aligns with the bound `actionCode`.
+   * Throws ProtocolError if validation fails.
+   * @overload
+   */
+  verifyTransactionMatchesCode(
+    actionCode: ActionCode,
+    txResponse:
+      | TransactionResponse
+      | VersionedTransactionResponse
+      | ParsedTransactionWithMeta
+  ): void;
+  verifyTransactionMatchesCode(
+    actionCode: ActionCode,
+    input:
+      | string
+      | TransactionResponse
+      | VersionedTransactionResponse
+      | ParsedTransactionWithMeta
+  ): void {
     // Check expiration first
     const currentTime = Date.now();
     if (currentTime > actionCode.expiresAt) {
@@ -591,7 +612,10 @@ export class SolanaAdapter extends BaseChainAdapter {
       );
     }
 
-    const meta = this.parseMeta(txString);
+    const meta =
+      typeof input === "string"
+        ? this.parseMeta(input)
+        : this.parseMeta(input);
     if (!meta) {
       throw ProtocolError.missingMeta();
     }
@@ -617,9 +641,32 @@ export class SolanaAdapter extends BaseChainAdapter {
    * Verify that the base64-encoded transaction is signed by the "intendedFor" pubkey
    * as declared in the protocol meta of the transaction.
    * Throws ProtocolError if validation fails.
+   * @overload
    */
-  verifyTransactionSignedByIntentOwner(txString: string): void {
-    const meta = this.parseMeta(txString);
+  verifyTransactionSignedByIntentOwner(txString: string): void;
+  /**
+   * Verify that the transaction response from solana.getTransaction() is signed by the "intendedFor" pubkey
+   * as declared in the protocol meta of the transaction.
+   * Throws ProtocolError if validation fails.
+   * @overload
+   */
+  verifyTransactionSignedByIntentOwner(
+    txResponse:
+      | TransactionResponse
+      | VersionedTransactionResponse
+      | ParsedTransactionWithMeta
+  ): void;
+  verifyTransactionSignedByIntentOwner(
+    input:
+      | string
+      | TransactionResponse
+      | VersionedTransactionResponse
+      | ParsedTransactionWithMeta
+  ): void {
+    const meta =
+      typeof input === "string"
+        ? this.parseMeta(input)
+        : this.parseMeta(input);
     if (!meta) {
       throw ProtocolError.missingMeta();
     }
@@ -654,8 +701,10 @@ export class SolanaAdapter extends BaseChainAdapter {
       );
     }
 
-    const tx = this.deserializeTransaction(txString);
-    const actualSigners: string[] = [];
+    // Handle base64 string (existing functionality)
+    if (typeof input === "string") {
+      const tx = this.deserializeTransaction(input);
+      const actualSigners: string[] = [];
 
     // For legacy Transaction
     if (tx instanceof Transaction) {
@@ -748,6 +797,136 @@ export class SolanaAdapter extends BaseChainAdapter {
     throw ProtocolError.invalidTransactionFormat(
       "Unsupported transaction format"
     );
+    }
+
+    // Handle transaction response objects
+    const actualSigners: string[] = [];
+    let isSignedByIntended = false;
+    let isSignedByIssuer = false;
+
+    // Handle ParsedTransactionWithMeta
+    if (
+      "transaction" in input &&
+      "message" in input.transaction &&
+      "instructions" in input.transaction.message &&
+      Array.isArray(input.transaction.message.instructions) &&
+      input.transaction.message.instructions.length > 0 &&
+      ("program" in input.transaction.message.instructions[0]! ||
+        "programId" in input.transaction.message.instructions[0]!)
+    ) {
+      // This is a ParsedMessage - use accountKeys from parsed message
+      const parsedMsg = input.transaction.message;
+      for (const account of parsedMsg.accountKeys) {
+        // account is ParsedMessageAccount with pubkey, signer, writable properties
+        if ("signer" in account && account.signer) {
+          const pubkey = "pubkey" in account ? account.pubkey : account;
+          const pubkeyObj = pubkey instanceof PublicKey ? pubkey : new PublicKey(pubkey);
+          actualSigners.push(pubkeyObj.toString());
+          if (pubkeyObj.equals(intendedPubkey)) {
+            isSignedByIntended = true;
+          }
+          if (issuer && pubkeyObj.equals(issuerPubkey!)) {
+            isSignedByIssuer = true;
+          }
+        }
+      }
+    } else {
+      // Handle TransactionResponse or VersionedTransactionResponse
+      const msg = input.transaction.message;
+
+      // Check if it's a MessageV0 (versioned)
+      if (msg instanceof MessageV0) {
+        const signerCount = msg.header.numRequiredSignatures;
+        const staticKeys = msg.staticAccountKeys;
+
+        // Signers are always in staticAccountKeys (Solana requirement)
+        for (let i = 0; i < signerCount; i++) {
+          const key = staticKeys[i];
+          if (key) {
+            actualSigners.push(key.toString());
+            if (key.equals(intendedPubkey)) {
+              isSignedByIntended = true;
+            }
+            if (issuer && key.equals(issuerPubkey!)) {
+              isSignedByIssuer = true;
+            }
+          }
+        }
+      } else if (msg instanceof Message || ("version" in msg && msg.version === "legacy")) {
+        // Legacy Message
+        const legacyMsg = msg as Message;
+        const signerCount = legacyMsg.header.numRequiredSignatures;
+        const accountKeys = legacyMsg.accountKeys;
+
+        // Signers are always at the beginning of accountKeys
+        for (let i = 0; i < signerCount; i++) {
+          const key = accountKeys[i];
+          if (key) {
+            actualSigners.push(key.toString());
+            if (key.equals(intendedPubkey)) {
+              isSignedByIntended = true;
+            }
+            if (issuer && key.equals(issuerPubkey!)) {
+              isSignedByIssuer = true;
+            }
+          }
+        }
+      } else {
+        // Try to extract from message structure (fallback for plain objects)
+        try {
+          // For versioned messages, try to get staticAccountKeys
+          if ("staticAccountKeys" in msg && Array.isArray(msg.staticAccountKeys)) {
+            const v0Msg = msg as unknown as MessageV0;
+            const signerCount = v0Msg.header.numRequiredSignatures;
+            for (let i = 0; i < signerCount; i++) {
+              const key = v0Msg.staticAccountKeys[i];
+              if (key) {
+                const pubkey = key instanceof PublicKey ? key : new PublicKey(key);
+                actualSigners.push(pubkey.toString());
+                if (pubkey.equals(intendedPubkey)) {
+                  isSignedByIntended = true;
+                }
+                if (issuer && pubkey.equals(issuerPubkey!)) {
+                  isSignedByIssuer = true;
+                }
+              }
+            }
+          } else if ("accountKeys" in msg && Array.isArray(msg.accountKeys)) {
+            // Legacy message
+            const legacyMsg = msg as unknown as Message;
+            const signerCount = legacyMsg.header.numRequiredSignatures;
+            for (let i = 0; i < signerCount; i++) {
+              const key = legacyMsg.accountKeys[i];
+              if (key) {
+                const pubkey = key instanceof PublicKey ? key : new PublicKey(key);
+                actualSigners.push(pubkey.toString());
+                if (pubkey.equals(intendedPubkey)) {
+                  isSignedByIntended = true;
+                }
+                if (issuer && pubkey.equals(issuerPubkey!)) {
+                  isSignedByIssuer = true;
+                }
+              }
+            }
+          }
+        } catch {
+          throw ProtocolError.invalidTransactionFormat(
+            "Unable to extract signers from transaction response"
+          );
+        }
+      }
+    }
+
+    if (!isSignedByIntended) {
+      throw ProtocolError.transactionNotSignedByIntendedOwner(
+        intended,
+        actualSigners
+      );
+    }
+
+    if (issuer && !isSignedByIssuer) {
+      throw ProtocolError.transactionNotSignedByIssuer(issuer, actualSigners);
+    }
   }
 
   verifyMessageSignedByIntentOwner(
